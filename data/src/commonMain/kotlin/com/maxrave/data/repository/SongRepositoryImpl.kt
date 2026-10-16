@@ -271,6 +271,11 @@ internal class SongRepositoryImpl(
 
     override fun insertSong(songEntity: SongEntity): Flow<Long> = flow<Long> { emit(localDataSource.insertSong(songEntity)) }.flowOn(Dispatchers.IO)
 
+    override suspend fun insertSongs(songs: List<SongEntity>) =
+        withContext(Dispatchers.IO) {
+            localDataSource.insertSongs(songs)
+        }
+
     override fun updateThumbnailsSongEntity(
         thumbnail: String,
         videoId: String,

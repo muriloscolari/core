@@ -238,7 +238,10 @@ internal class LocalDataSource(
      * The IGNORE-and-self-repair policy above lives inside the DAO method here, because the
      * transaction has to wrap the whole batch and only a DAO method can be `@Transaction`.
      */
-    suspend fun insertSongs(songs: List<SongEntity>) = databaseDao.insertSongs(songs)
+    suspend fun insertSongs(songs: List<SongEntity>) {
+        if (songs.isEmpty()) return
+        databaseDao.insertSongs(songs)
+    }
 
     suspend fun updateThumbnailsSongEntity(
         thumbnail: String,
@@ -509,6 +512,11 @@ internal class LocalDataSource(
 
     suspend fun insertSetVideoId(setVideoIdEntity: SetVideoIdEntity) = databaseDao.insertSetVideoId(setVideoIdEntity)
 
+    suspend fun insertSetVideoIds(setVideoIdEntities: List<SetVideoIdEntity>) {
+        if (setVideoIdEntities.isEmpty()) return
+        databaseDao.insertSetVideoIds(setVideoIdEntities)
+    }
+
     suspend fun getSetVideoId(
         videoId: String,
         youtubePlaylistIds: List<String>,
@@ -521,6 +529,11 @@ internal class LocalDataSource(
 
     suspend fun insertPairSongLocalPlaylist(pairSongLocalPlaylist: PairSongLocalPlaylist) =
         databaseDao.insertPairSongLocalPlaylist(pairSongLocalPlaylist)
+
+    suspend fun insertPairSongLocalPlaylists(pairs: List<PairSongLocalPlaylist>) {
+        if (pairs.isEmpty()) return
+        databaseDao.insertPairSongLocalPlaylists(pairs)
+    }
 
     suspend fun unsyncLocalPlaylist(id: Long) = databaseDao.unsyncLocalPlaylist(id)
 

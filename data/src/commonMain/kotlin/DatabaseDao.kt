@@ -40,9 +40,11 @@ import com.maxrave.domain.data.entities.analytics.query.TopPlayedAlbum
 import com.maxrave.domain.data.entities.analytics.query.TopPlayedArtist
 import com.maxrave.domain.data.entities.analytics.query.TopPlayedArtistTime
 import com.maxrave.domain.data.entities.analytics.query.TopPlayedTracks
+import com.maxrave.domain.data.player.LiveStreamRegistry
 import com.maxrave.domain.data.type.PlaylistType
 import com.maxrave.domain.data.type.RecentlyType
 import com.maxrave.domain.extension.now
+import com.maxrave.domain.utils.isLive
 import com.maxrave.domain.utils.LIVE_RESULT_TYPE
 import kotlinx.coroutines.flow.Flow
 import kotlinx.datetime.LocalDateTime
@@ -307,6 +309,9 @@ interface DatabaseDao {
                         artistId = song.artistId,
                     )
                 }
+            }
+            if ((rowId == -1L && song.isLive) || (!song.isLive && LiveStreamRegistry.isLive(song.videoId))) {
+                markSongLive(song.videoId)
             }
         }
     }
@@ -817,6 +822,9 @@ interface DatabaseDao {
     @Insert(onConflict = OnConflictStrategy.Companion.REPLACE)
     suspend fun insertSetVideoId(setVideoIdEntity: SetVideoIdEntity)
 
+    @Insert(onConflict = OnConflictStrategy.Companion.REPLACE)
+    suspend fun insertSetVideoIds(setVideoIdEntities: List<SetVideoIdEntity>)
+
     /**
      * A setVideoId names one entry of one playlist, so the playlist is part of the key. Looked up by
      * videoId alone, SQLite returned the row whose playlist id sorts first — an entry of whichever
@@ -840,6 +848,9 @@ interface DatabaseDao {
     // PairSongLocalPlaylist
     @Insert(onConflict = OnConflictStrategy.Companion.REPLACE)
     suspend fun insertPairSongLocalPlaylist(pairSongLocalPlaylist: PairSongLocalPlaylist)
+
+    @Insert(onConflict = OnConflictStrategy.Companion.REPLACE)
+    suspend fun insertPairSongLocalPlaylists(pairs: List<PairSongLocalPlaylist>)
 
     @Query("SELECT * FROM pair_song_local_playlist WHERE songId = :videoId AND playlistId = :localPlaylistId LIMIT 1")
     suspend fun getPlaylistPairOfSong(

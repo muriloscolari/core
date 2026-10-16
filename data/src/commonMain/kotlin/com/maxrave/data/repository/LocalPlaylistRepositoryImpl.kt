@@ -134,7 +134,7 @@ internal class LocalPlaylistRepositoryImpl(
     ): Flow<PagingData<Pair<SongEntity, PairSongLocalPlaylist>>> {
         if (filter == FilterState.CustomOrder || filter == FilterState.Title) {
             return Pager(
-                config = PagingConfig(pageSize = 100, prefetchDistance = 5),
+                config = PagingConfig(pageSize = 100, prefetchDistance = 30),
                 pagingSourceFactory = {
                     LocalPlaylistPagingSource(
                         playlistId = id,
@@ -145,7 +145,7 @@ internal class LocalPlaylistRepositoryImpl(
             ).flow
         } else {
             return Pager(
-                config = PagingConfig(pageSize = 100, prefetchDistance = 5),
+                config = PagingConfig(pageSize = 100, prefetchDistance = 30),
                 pagingSourceFactory = {
                     LocalPlaylistTimeBasedPagingSource(
                         playlistId = id,
@@ -291,25 +291,22 @@ internal class LocalPlaylistRepositoryImpl(
                     downloadState = DownloadState.STATE_NOT_DOWNLOADED,
                     syncState = Syncing,
                 )
-            runBlocking { localDataSource.insertLocalPlaylist(localPlaylistEntity) }
+            localDataSource.insertLocalPlaylist(localPlaylistEntity)
             val localPlaylistId =
                 localDataSource.getLocalPlaylistByYoutubePlaylistId(playlist.id)?.id
                     ?: throw Exception(errorMessage)
-            tracks.forEachIndexed { i, track ->
-                runBlocking {
-                    localDataSource.insertSong(
-                        track.toSongEntity(),
+            val nowTime = now()
+            localDataSource.insertSongs(tracks.map { it.toSongEntity() })
+            localDataSource.insertPairSongLocalPlaylists(
+                tracks.mapIndexed { i, track ->
+                    PairSongLocalPlaylist(
+                        playlistId = localPlaylistId,
+                        songId = track.videoId,
+                        position = i,
+                        inPlaylist = nowTime,
                     )
-                    localDataSource.insertPairSongLocalPlaylist(
-                        PairSongLocalPlaylist(
-                            playlistId = localPlaylistId,
-                            songId = track.videoId,
-                            position = i,
-                            inPlaylist = now(),
-                        ),
-                    )
-                }
-            }
+                },
+            )
             val ytPlaylistId = playlist.id
             val id = ytPlaylistId.verifyYouTubePlaylistId()
             youTube
@@ -350,9 +347,7 @@ internal class LocalPlaylistRepositoryImpl(
                     if (parsed.isEmpty()) {
                         emit(LocalResource.Error("Can't get setVideoId"))
                     }
-                    parsed.forEach { setVideoId ->
-                        localDataSource.insertSetVideoId(setVideoId)
-                    }
+                    localDataSource.insertSetVideoIds(parsed)
                     localDataSource.updateLocalPlaylistYouTubePlaylistSyncState(
                         localPlaylistId,
                         Synced,
@@ -392,16 +387,16 @@ internal class LocalPlaylistRepositoryImpl(
                 .onSuccess { list ->
                     Logger.d(TAG, "syncLocalPlaylistToYouTubePlaylist: onSuccess song ${list.map { it.first.title }}")
                     Logger.d(TAG, "syncLocalPlaylistToYouTubePlaylist: onSuccess setVideoId ${list.map { it.second }}")
-                    list.forEach { new ->
-                        localDataSource.insertSong(new.first.toTrack().toSongEntity())
-                        localDataSource.insertSetVideoId(
+                    localDataSource.insertSongs(list.map { it.first.toTrack().toSongEntity() })
+                    localDataSource.insertSetVideoIds(
+                        list.map { new ->
                             SetVideoIdEntity(
                                 videoId = new.first.id,
                                 setVideoId = new.second,
                                 youtubePlaylistId = ytId,
-                            ),
-                        )
-                    }
+                            )
+                        },
+                    )
                     if (list.isEmpty()) Logger.w(TAG, "syncLocalPlaylistToYouTubePlaylist: SetVideoIds Empty list")
                     localDataSource.updateLocalPlaylistYouTubePlaylistId(playlistId, ytId)
                     localDataSource.updateLocalPlaylistYouTubePlaylistSyncState(playlistId, Synced)
@@ -527,26 +522,29 @@ internal class LocalPlaylistRepositoryImpl(
                                 .subtract(tracks.toMutableSet())
                         val newTrackList = list.filter { newTrack.contains(it.first.id) }
                         Logger.w(TAG, "updateListTrackSynced: newTrackList ${newTrackList.map { it.first.title }}")
-                        newTrackList.forEach { new ->
-                            localDataSource.insertSong(new.first.toTrack().toSongEntity())
-                            Logger.i(TAG, "insertSong: ${new.first.toTrack().toSongEntity()}")
-                            localDataSource.insertPairSongLocalPlaylist(
+                        val nowTime = now()
+                        val basePos = currentTracks.size
+                        localDataSource.insertSongs(newTrackList.map { it.first.toTrack().toSongEntity() })
+                        localDataSource.insertPairSongLocalPlaylists(
+                            newTrackList.mapIndexed { index, new ->
                                 PairSongLocalPlaylist(
                                     playlistId = id,
                                     songId = new.first.id,
-                                    position = currentTracks.size,
-                                    inPlaylist = now(),
-                                ),
-                            )
-                            localDataSource.insertSetVideoId(
+                                    position = basePos + index,
+                                    inPlaylist = nowTime,
+                                )
+                            },
+                        )
+                        localDataSource.insertSetVideoIds(
+                            newTrackList.map { new ->
                                 SetVideoIdEntity(
                                     videoId = new.first.id,
                                     setVideoId = new.second,
                                     youtubePlaylistId = ytId,
-                                ),
-                            )
-                            currentTracks.add(new.first.id)
-                        }
+                                )
+                            },
+                        )
+                        currentTracks.addAll(newTrackList.map { it.first.id })
                         localDataSource.updateLocalPlaylistTracks(currentTracks, id).let {
                             emit(true)
                         }
@@ -557,7 +555,7 @@ internal class LocalPlaylistRepositoryImpl(
                     }
             }
             emit(false)
-        }
+        }.flowOn(Dispatchers.IO)
 
     // Update
     override fun addTrackToLocalPlaylist(
@@ -816,18 +814,16 @@ internal class LocalPlaylistRepositoryImpl(
                         }
                         Logger.d("Repository", "playlist final data: ${listContent.size}")
                         parseSetVideoId(youtubePlaylistId, data ?: emptyList()).let { playlist ->
-                            playlist.forEach { item ->
-                                localDataSource.insertSetVideoId(item)
-                            }
-                            listContent.forEach { item ->
-                                localDataSource.insertSetVideoId(
+                            localDataSource.insertSetVideoIds(playlist)
+                            localDataSource.insertSetVideoIds(
+                                listContent.map { item ->
                                     SetVideoIdEntity(
                                         videoId = item.id,
                                         setVideoId = item.setVideoId,
                                         youtubePlaylistId = youtubePlaylistId,
-                                    ),
-                                )
-                            }
+                                    )
+                                },
+                            )
                             emit(playlist)
                         }
                     }.onFailure { e ->
