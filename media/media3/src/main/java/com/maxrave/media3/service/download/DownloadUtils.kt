@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.io.ByteArrayInputStream
 import java.util.concurrent.Executor
@@ -183,7 +184,7 @@ internal class DownloadUtils(
             dataSourceFactory,
             Executor(Runnable::run),
         ).apply {
-            maxParallelDownloads = 20
+            maxParallelDownloads = 3
             minRetryCount = 3
             addListener(
                 MusicDownloadService.TerminalStateNotificationHelper(
@@ -288,6 +289,13 @@ internal class DownloadUtils(
     }
 
     init {
+        coroutineScope.launch {
+            dataStoreManager.maxParallelDownloads.collect { maxParallel ->
+                withContext(Dispatchers.Main) {
+                    downloadManager.maxParallelDownloads = maxParallel.coerceIn(1, 20)
+                }
+            }
+        }
         coroutineScope.launch {
             downloads.collect { download ->
                 download.forEach {

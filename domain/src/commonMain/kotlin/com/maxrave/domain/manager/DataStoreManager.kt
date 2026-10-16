@@ -33,6 +33,10 @@ interface DataStoreManager {
 
     suspend fun setVideoDownloadQuality(quality: String)
 
+    val maxParallelDownloads: Flow<Int>
+
+    suspend fun setMaxParallelDownloads(count: Int)
+
     val language: Flow<String>
 
     /**
