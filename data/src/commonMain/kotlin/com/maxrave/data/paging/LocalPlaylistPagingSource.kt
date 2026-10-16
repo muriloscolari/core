@@ -27,7 +27,7 @@ internal class LocalPlaylistPagingSource(
                     localDataSource.getPlaylistPairSongByOffset(
                         playlistId = playlistId,
                         filterState = filter,
-                        offset = currentPage,
+                        offset = currentPage * 50,
                     )
                 Logger.d("LocalPlaylistPagingSource", "load page=$currentPage pairs=${pairs?.size ?: 0}")
                 val songs =
