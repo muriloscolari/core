@@ -174,6 +174,19 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val maxParallelDownloads: Flow<Int> =
+        settingsDataStore.data.map { preferences ->
+            preferences[MAX_PARALLEL_DOWNLOADS] ?: 3
+        }
+
+    override suspend fun setMaxParallelDownloads(count: Int) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[MAX_PARALLEL_DOWNLOADS] = count.coerceIn(1, 20)
+            }
+        }
+    }
+
     override val language: Flow<String> =
         settingsDataStore.data.map { preferences ->
             preferences[stringPreferencesKey(SELECTED_LANGUAGE)] ?: SUPPORTED_LANGUAGE.codes.first()
@@ -1836,6 +1849,7 @@ internal class DataStoreManagerImpl(
         val QUALITY = stringPreferencesKey("quality")
         val DOWNLOAD_QUALITY = stringPreferencesKey("download_quality")
         val VIDEO_DOWNLOAD_QUALITY = stringPreferencesKey("video_download_quality")
+        val MAX_PARALLEL_DOWNLOADS = intPreferencesKey("max_parallel_downloads")
         val NORMALIZE_VOLUME = stringPreferencesKey("normalize_volume")
         val SKIP_SILENT = stringPreferencesKey("skip_silent")
         val SAVE_STATE_OF_PLAYBACK = stringPreferencesKey("save_state_of_playback")
