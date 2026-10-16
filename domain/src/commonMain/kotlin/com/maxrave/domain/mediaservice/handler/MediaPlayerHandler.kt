@@ -87,6 +87,18 @@ interface MediaPlayerHandler {
 
     fun setQueueData(queueData: QueueData.Data)
 
+    /**
+     * Seamlessly transitions the current queue to Radio mode for the currently playing track.
+     * Removes any upcoming tracks after the current track, updates queue metadata to RADIO,
+     * and appends the provided radio recommendations without interrupting active playback.
+     */
+    suspend fun setRadioQueueForCurrentSong(
+        radioTracks: List<Track>,
+        playlistId: String,
+        playlistName: String,
+        continuation: String?,
+    )
+
     fun getCurrentMediaItem(): GenericMediaItem?
 
     // Track operations
