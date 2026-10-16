@@ -1138,22 +1138,18 @@ internal class MediaServiceHandlerImpl(
                     val data = res.data
                     when (res) {
                         is Resource.Success if (data != null && data.first.isNotEmpty()) -> {
-                            setQueueData(
-                                QueueData.Data(
-                                    listTracks = data.first,
-                                    firstPlayedTrack = data.first.first(),
-                                    playlistId = "RDAMVM${currentSong.videoId}",
-                                    playlistName = "\"${currentSong.title}\" Radio",
-                                    playlistType = PlaylistType.RADIO,
-                                    continuation = data.second,
-                                ),
+                            val radioTracks =
+                                if (data.first.firstOrNull()?.videoId == currentSong.videoId) {
+                                    data.first.drop(1)
+                                } else {
+                                    data.first
+                                }
+                            setRadioQueueForCurrentSong(
+                                radioTracks = radioTracks,
+                                playlistId = "RDAMVM${currentSong.videoId}",
+                                playlistName = "\"${currentSong.title}\" Radio",
+                                continuation = data.second,
                             )
-                            clearMediaItems()
-                            currentSong.durationSeconds.let {
-                                songRepository.updateDurationSeconds(it, currentSong.videoId)
-                            }
-                            addMediaItem(currentSong.toGenericMediaItem(), playWhenReady = true)
-                            loadPlaylistOrAlbum(0)
                         }
 
                         else -> {
@@ -1727,6 +1723,44 @@ internal class MediaServiceHandlerImpl(
                 emptySet()
             }
         Logger.d(TAG, "setQueueData: ${queueData.listTracks.size} tracks")
+    }
+
+    override suspend fun setRadioQueueForCurrentSong(
+        radioTracks: List<Track>,
+        playlistId: String,
+        playlistName: String,
+        continuation: String?,
+    ) {
+        if (player.shuffleModeEnabled) {
+            player.shuffleModeEnabled = false
+            _controlState.value = _controlState.value.copy(isShuffle = false)
+        }
+
+        val currentIndex = currentOrderIndex()
+        val currentTracks = queueData.value.data.listTracks
+        if (currentIndex in currentTracks.indices) {
+            val toRemoveCount = currentTracks.size - 1 - currentIndex
+            for (i in 0 until toRemoveCount) {
+                removeMediaItem(queueData.value.data.listTracks.size - 1)
+            }
+        }
+
+        _queueData.update {
+            it.copy(
+                data =
+                    it.data.copy(
+                        playlistId = playlistId,
+                        playlistName = playlistName,
+                        playlistType = PlaylistType.RADIO,
+                        continuation = continuation,
+                    ),
+                queueState = QueueData.StateSource.STATE_INITIALIZED,
+            )
+        }
+
+        if (radioTracks.isNotEmpty()) {
+            loadMoreCatalog(ArrayList(radioTracks))
+        }
     }
 
     override fun getCurrentMediaItem(): GenericMediaItem? = player.currentMediaItem
