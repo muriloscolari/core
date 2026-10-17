@@ -50,11 +50,15 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.espresso.core)
 
+    implementation(libs.activity.compose)
+
     // Compose
     val composeBom = platform(libs.compose.bom)
     implementation(composeBom)
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.animation:animation")
     implementation(libs.compose.material3.lib)
-    implementation(libs.compose.ui)
 
     implementation(project(":common"))
     implementation(project(":domain"))
