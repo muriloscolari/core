@@ -705,7 +705,9 @@ internal class LyricsCanvasRepositoryImpl(
                 .getLyrics(videoId)
                 .onSuccess { lyrics ->
                     Logger.d(simpMusicLyricsTag, "Lyrics found: $lyrics")
-                    val result = lyrics.firstOrNull()
+                    val result =
+                        lyrics.firstOrNull { !it.richSyncLyrics.isNullOrBlank() }
+                            ?: lyrics.firstOrNull()
                     if (result == null) {
                         Logger.w(simpMusicLyricsTag, "No lyrics found for videoId: $videoId")
                         emit(Resource.Error<Lyrics>("No lyrics found"))
