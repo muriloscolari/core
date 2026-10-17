@@ -56,6 +56,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.compose.PlayerSurface
 import androidx.media3.ui.compose.SURFACE_TYPE_SURFACE_VIEW
+import androidx.media3.ui.compose.SURFACE_TYPE_TEXTURE_VIEW
 import androidx.media3.ui.compose.modifiers.resizeWithContentScale
 import androidx.media3.ui.compose.state.rememberPresentationState
 import coil3.compose.AsyncImage
@@ -146,6 +147,7 @@ fun MediaPlayerView(
                 .apply {
                     addListener(playerListener)
                     videoScalingMode = C.VIDEO_SCALING_MODE_DEFAULT
+                    videoChangeFrameRateStrategy = C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
                 }
         }
 
@@ -188,7 +190,7 @@ fun MediaPlayerView(
         Box(modifier = modifier.graphicsLayer { clip = true }) {
             PlayerSurface(
                 player = exoPlayer,
-                surfaceType = SURFACE_TYPE_SURFACE_VIEW,
+                surfaceType = SURFACE_TYPE_TEXTURE_VIEW,
                 modifier =
                     Modifier
                         .fillMaxSize()
@@ -207,7 +209,7 @@ fun MediaPlayerView(
         Box(modifier = modifier.graphicsLayer { clip = true }) {
             PlayerSurface(
                 player = exoPlayer,
-                surfaceType = SURFACE_TYPE_SURFACE_VIEW,
+                surfaceType = SURFACE_TYPE_TEXTURE_VIEW,
                 modifier =
                     Modifier
                         .fillMaxHeight()
@@ -399,7 +401,10 @@ fun MediaPlayerViewWithSubtitle(
         playerListener.onTracksChanged(player.currentTracks)
         artworkUri = player.currentMediaItem?.mediaMetadata?.artworkUri?.toString()
         player.addListener(playerListener)
-        (player as? ExoPlayer)?.videoScalingMode = C.VIDEO_SCALING_MODE_DEFAULT
+        (player as? ExoPlayer)?.apply {
+            videoScalingMode = C.VIDEO_SCALING_MODE_DEFAULT
+            videoChangeFrameRateStrategy = C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
+        }
     }
 
     val presentationState = rememberPresentationState(player)
@@ -470,7 +475,7 @@ fun MediaPlayerViewWithSubtitle(
             } else {
                 PlayerSurface(
                     player = player,
-                    surfaceType = SURFACE_TYPE_SURFACE_VIEW,
+                    surfaceType = SURFACE_TYPE_TEXTURE_VIEW,
                     modifier =
                         Modifier
                             .wrapContentSize()
