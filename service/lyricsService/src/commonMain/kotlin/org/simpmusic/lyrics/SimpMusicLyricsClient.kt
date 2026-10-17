@@ -129,17 +129,26 @@ class SimpMusicLyricsClient {
                     q_track = q_track,
                     q_artist = q_artist,
                 ).body<List<LrclibObject>>()
-        val lrclibObject: LrclibObject? =
+        val candidates =
             if (duration != null) {
-                rs.find { abs(it.duration.toInt() - duration) <= 10 }
+                rs.filter { abs(it.duration.toInt() - duration) <= 10 }
             } else {
-                rs.firstOrNull()
+                rs
             }
+        val richSyncTagRegex = Regex("""<\d{1,2}:\d{2}\.\d{2,3}>""")
+        val lrclibObject: LrclibObject? =
+            candidates.firstOrNull { candidate ->
+                !candidate.syncedLyrics.isNullOrEmpty() && richSyncTagRegex.containsMatchIn(candidate.syncedLyrics)
+            } ?: candidates.firstOrNull()
         if (lrclibObject != null) {
             val syncedLyrics = lrclibObject.syncedLyrics
             val plainLyrics = lrclibObject.plainLyrics
             if (!syncedLyrics.isNullOrEmpty()) {
-                parseSyncedLyrics(syncedLyrics)
+                if (richSyncTagRegex.containsMatchIn(syncedLyrics)) {
+                    org.simpmusic.lyrics.parser.parseRichSyncLyrics(syncedLyrics)
+                } else {
+                    parseSyncedLyrics(syncedLyrics)
+                }
             } else if (!plainLyrics.isNullOrEmpty()) {
                 parseUnsyncedLyrics(plainLyrics)
             } else {
