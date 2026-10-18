@@ -125,7 +125,7 @@ internal class LibraryTabCarScreen(
                                 shelf to children.take(MAX_GRID_ITEMS_PER_SECTION)
                             }.filter { it.second.isNotEmpty() }
 
-                    // Fetch user playlists to highlight directly on the Home tab with artwork
+                    // Fetch user playlists to highlight directly on the Home tab with artwork (single row)
                     val userPlaylists =
                         browser
                             .getChildren(SimpleMediaSessionCallback.PLAYLIST, 0, Int.MAX_VALUE, null)
@@ -133,7 +133,7 @@ internal class LibraryTabCarScreen(
                             .value
                             ?.toList()
                             .orEmpty()
-                            .take(MAX_GRID_ITEMS_PER_SECTION)
+                            .take(HOME_PLAYLISTS_ROW_COUNT)
 
                     if (userPlaylists.isNotEmpty()) {
                         val playlistsShelf =
@@ -377,6 +377,7 @@ internal class LibraryTabCarScreen(
     private companion object {
         private const val TAG = "LibraryTabCarScreen"
         private const val MAX_GRID_ITEMS_PER_SECTION = 10
+        private const val HOME_PLAYLISTS_ROW_COUNT = 4
         private const val ARTWORK_INVALIDATE_BATCH_MS = 300L
         private val TABS =
             listOf(

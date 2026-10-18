@@ -402,17 +402,19 @@ internal class SimpleMediaSessionCallback(
                                 ),
                             )
                             val ytPlaylists = playlistRepository.getLibraryPlaylist().firstOrNull()
-                            ytPlaylists?.forEach { yt ->
-                                playlistItems.add(
-                                    browsableMediaItem(
-                                        "$PLAYLIST/${yt.browseId}",
-                                        yt.title,
-                                        listOfNotNull(yt.author, yt.itemCount).joinToString(" • ").ifEmpty { null },
-                                        yt.thumbnails.lastOrNull()?.url?.toUri(),
-                                        MediaMetadata.MEDIA_TYPE_PLAYLIST,
-                                    ),
-                                )
-                            }
+                            ytPlaylists
+                                ?.filter { it.browseId != "VLLM" && it.browseId != "LM" }
+                                ?.forEach { yt ->
+                                    playlistItems.add(
+                                        browsableMediaItem(
+                                            "$PLAYLIST/${yt.browseId}",
+                                            yt.title,
+                                            listOfNotNull(yt.author, yt.itemCount).joinToString(" • ").ifEmpty { null },
+                                            yt.thumbnails.lastOrNull()?.url?.toUri(),
+                                            MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                        ),
+                                    )
+                                }
                         }
 
                         val likedPlaylists = playlistRepository.getLikedPlaylists().firstOrNull() ?: emptyList()
