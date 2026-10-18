@@ -352,6 +352,36 @@ internal class DelegatingForwardingPlayer(
         if (nav != null) nav.setPlayWhenReady(playWhenReady) else super.setPlayWhenReady(playWhenReady)
     }
 
+    // ========== Playlist / Item Loading Overrides ==========
+    // MediaSession.Callback.onSetMediaItems asynchronously orchestrates loading through
+    // MediaPlayerHandler / CrossfadeExoPlayerAdapter and returns emptyList() as a default result.
+    // Media3's MediaSessionStub takes that result and invokes player.setMediaItems(emptyList()),
+    // which would clear the delegate ExoPlayer that was just loaded. Ignore empty setMediaItems calls.
+
+    override fun setMediaItems(mediaItems: List<MediaItem>) {
+        if (mediaItems.isEmpty()) {
+            Logger.d(TAG, "Ignoring setMediaItems with empty list to preserve active playback")
+            return
+        }
+        super.setMediaItems(mediaItems)
+    }
+
+    override fun setMediaItems(mediaItems: List<MediaItem>, resetPosition: Boolean) {
+        if (mediaItems.isEmpty()) {
+            Logger.d(TAG, "Ignoring setMediaItems with empty list to preserve active playback")
+            return
+        }
+        super.setMediaItems(mediaItems, resetPosition)
+    }
+
+    override fun setMediaItems(mediaItems: List<MediaItem>, startIndex: Int, startPositionMs: Long) {
+        if (mediaItems.isEmpty()) {
+            Logger.d(TAG, "Ignoring setMediaItems with empty list to preserve active playback")
+            return
+        }
+        super.setMediaItems(mediaItems, startIndex, startPositionMs)
+    }
+
     // NOTE: Do NOT override getMediaItemCount() or getCurrentMediaItemIndex() here.
     // These must remain consistent with the underlying ExoPlayer's Timeline (1 item, index 0).
     // Media3's PlayerWrapper.createPositionInfo() validates that currentMediaItemIndex < timeline.windowCount.

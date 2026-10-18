@@ -695,48 +695,49 @@ internal class SimpleMediaSessionCallback(
                 }
 
                 HOME -> {
-                    val type = path.getOrNull(2) ?: return@future defaultResult
-                    val content = listHomeItem.find { it.title == path.getOrNull(1) }?.contents
-                    if (type == SONG) {
-                        val songId = path.getOrNull(3) ?: return@future defaultResult
-                        val songs =
-                            content?.filter { it?.videoId != null }?.mapNotNull {
-                                it?.toTrack()
-                            }
-                        if (songs.isNullOrEmpty()) {
-                            defaultResult
-                        } else {
-                            songs.forEach {
-                                songRepository.insertSong(it.toSongEntity()).first()
-                            }
-                            val firstQueue = songs.firstOrNull { it.videoId == songId } ?: return@future defaultResult
-                            mediaPlayerHandler.setQueueData(
-                                QueueData.Data(
-                                    listTracks = songs,
-                                    firstPlayedTrack = firstQueue,
-                                    playlistId = "RDAMVM$songId",
-                                    playlistName = "\"${firstQueue.title}\" Radio",
-                                    playlistType = PlaylistType.RADIO,
-                                    continuation = null,
-                                ),
-                            )
-                            mediaPlayerHandler.loadMediaItem(
-                                firstQueue,
-                                Config.SONG_CLICK,
-                                0,
-                            )
-                            defaultResult
-                        }
-                    } else if (type == PLAYLIST) {
-                        val songId = path.getOrNull(4) ?: return@future defaultResult
-                        val playlistId = path.getOrNull(3) ?: return@future defaultResult
+                    val songId = path.lastOrNull() ?: return@future defaultResult
+                    val isPlaylist = path.contains(PLAYLIST)
+                    if (!isPlaylist) {
+                        val homeItem =
+                            listHomeItem.find { shelf ->
+                                shelf.contents.any { c -> c?.videoId == songId }
+                            } ?: listHomeItem.find { it.title == path.getOrNull(1) }
+                        val firstQueue =
+                            homeItem
+                                ?.contents
+                                ?.firstOrNull { it?.videoId == songId }
+                                ?.toTrack()
+                                ?: songRepository.getSongById(songId).first()?.toTrack()
+                                ?: return@future defaultResult
+
+                        songRepository.insertSong(firstQueue.toSongEntity()).first()
+                        mediaPlayerHandler.setQueueData(
+                            QueueData.Data(
+                                listTracks = arrayListOf(firstQueue),
+                                firstPlayedTrack = firstQueue,
+                                playlistId = "RDAMVM$songId",
+                                playlistName = "\"${firstQueue.title}\" Radio",
+                                playlistType = PlaylistType.RADIO,
+                                continuation = null,
+                            ),
+                        )
+                        mediaPlayerHandler.loadMediaItem(
+                            firstQueue,
+                            Config.SONG_CLICK,
+                            0,
+                        )
+                        defaultResult
+                    } else {
+                        val playlistIndex = path.indexOf(PLAYLIST)
+                        val playlistId = if (playlistIndex != -1) path.getOrNull(playlistIndex + 1) else null
+                        if (playlistId == null) return@future defaultResult
                         Logger.d(TAG, "onSetMediaItems playlistId: $playlistId")
                         val playlistEntity = playlistRepository.getPlaylist(playlistId).first()
                         Logger.w(TAG, "onSetMediaItems playlistEntity: $playlistEntity")
                         val tracks = playlistEntity?.tracks
                         if (tracks.isNullOrEmpty()) {
                             defaultResult
-                        } else if (tracks.isNotEmpty()) {
+                        } else {
                             val songs =
                                 tracks
                                     .let {
@@ -776,11 +777,7 @@ internal class SimpleMediaSessionCallback(
                                 index,
                             )
                             defaultResult
-                        } else {
-                            defaultResult
                         }
-                    } else {
-                        return@future defaultResult
                     }
                 }
 
