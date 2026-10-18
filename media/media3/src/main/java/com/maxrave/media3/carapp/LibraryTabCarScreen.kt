@@ -105,24 +105,52 @@ internal class LibraryTabCarScreen(
             val shelves =
                 try {
                     val browser = browserProvider().await()
-                    browser
-                        .getChildren(SimpleMediaSessionCallback.HOME, 0, Int.MAX_VALUE, null)
-                        .await()
-                        .value
-                        ?.toList()
-                        .orEmpty()
-                        .filter { it.mediaMetadata.isBrowsable == true }
-                        .map { shelf ->
-                            // Second level reads the callback's in-memory home cache — no extra network
-                            val children =
-                                browser
-                                    .getChildren(shelf.mediaId, 0, Int.MAX_VALUE, null)
-                                    .await()
-                                    .value
-                                    ?.toList()
-                                    .orEmpty()
-                            shelf to children.take(MAX_GRID_ITEMS_PER_SECTION)
-                        }.filter { it.second.isNotEmpty() }
+                    val onlineShelves =
+                        browser
+                            .getChildren(SimpleMediaSessionCallback.HOME, 0, Int.MAX_VALUE, null)
+                            .await()
+                            .value
+                            ?.toList()
+                            .orEmpty()
+                            .filter { it.mediaMetadata.isBrowsable == true }
+                            .map { shelf ->
+                                // Second level reads the callback's in-memory home cache — no extra network
+                                val children =
+                                    browser
+                                        .getChildren(shelf.mediaId, 0, Int.MAX_VALUE, null)
+                                        .await()
+                                        .value
+                                        ?.toList()
+                                        .orEmpty()
+                                shelf to children.take(MAX_GRID_ITEMS_PER_SECTION)
+                            }.filter { it.second.isNotEmpty() }
+
+                    // Fetch user playlists to highlight directly on the Home tab with artwork
+                    val userPlaylists =
+                        browser
+                            .getChildren(SimpleMediaSessionCallback.PLAYLIST, 0, Int.MAX_VALUE, null)
+                            .await()
+                            .value
+                            ?.toList()
+                            .orEmpty()
+                            .take(MAX_GRID_ITEMS_PER_SECTION)
+
+                    if (userPlaylists.isNotEmpty()) {
+                        val playlistsShelf =
+                            androidx.media3.common.MediaItem
+                                .Builder()
+                                .setMediaId(SimpleMediaSessionCallback.PLAYLIST)
+                                .setMediaMetadata(
+                                    androidx.media3.common.MediaMetadata
+                                        .Builder()
+                                        .setTitle(carContext.getString(R.string.playlists))
+                                        .setIsBrowsable(true)
+                                        .build(),
+                                ).build()
+                        listOf(playlistsShelf to userPlaylists) + onlineShelves
+                    } else {
+                        onlineShelves
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
