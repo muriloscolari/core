@@ -65,11 +65,20 @@ class ExoPlayerAdapter(
 
     override fun seekForward() = exoPlayer.seekForward()
 
-    override fun seekToNext() = exoPlayer.seekToNext()
+    override fun seekToNext() {
+        exoPlayer.seekToNext()
+        exoPlayer.play()
+    }
 
-    override fun seekToPrevious() = exoPlayer.seekToPrevious()
+    override fun seekToPrevious() {
+        exoPlayer.seekToPrevious()
+        exoPlayer.play()
+    }
 
-    override fun seekToPreviousMediaItem() = exoPlayer.seekToPreviousMediaItem()
+    override fun seekToPreviousMediaItem() {
+        exoPlayer.seekToPreviousMediaItem()
+        exoPlayer.play()
+    }
 
     override fun prepare() = exoPlayer.prepare()
 

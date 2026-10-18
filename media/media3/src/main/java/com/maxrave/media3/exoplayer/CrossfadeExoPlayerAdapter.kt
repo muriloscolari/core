@@ -826,6 +826,8 @@ internal class CrossfadeExoPlayerAdapter(
 
     override fun seekToNext() {
         coroutineScope.launch {
+            // When skipping tracks while paused, automatically resume playback
+            internalPlayWhenReady = true
             // During crossfade A→A+1, "next" commits A+1 as current (Direction 1: the UI already
             // shows A+1) and then advances to A+2. Outside crossfade it advances normally.
             val wasCrossfading = isCrossfading
@@ -838,12 +840,17 @@ internal class CrossfadeExoPlayerAdapter(
             } else if (wasCrossfading) {
                 // A+1 was the last track — stay on it (already promoted), just refresh metadata.
                 forwardingPlayer.notifyMediaItemChanged()
+                play()
+            } else {
+                play()
             }
         }
     }
 
     override fun seekToPrevious() {
         coroutineScope.launch {
+            // When skipping tracks while paused, automatically resume playback
+            internalPlayWhenReady = true
             // During a crossfade, commit the incoming track (A+1) as current FIRST, so the
             // 3-second rule below evaluates against A+1's position/index (Direction 1).
             if (isCrossfading) {
@@ -860,6 +867,7 @@ internal class CrossfadeExoPlayerAdapter(
             if (position > positionThresholdMs && !isCurrentTrackLive()) {
                 Logger.d(TAG, "seekToPrevious: pos=${position}ms > ${positionThresholdMs}ms — seeking to start")
                 seekTo(0)
+                play()
             } else if (hasPreviousMediaItem()) {
                 Logger.d(TAG, "seekToPrevious: pos=${position}ms <= ${positionThresholdMs}ms — going to previous track")
                 val prevIndex = getPreviousMediaItemIndex()
@@ -867,12 +875,15 @@ internal class CrossfadeExoPlayerAdapter(
             } else {
                 Logger.d(TAG, "seekToPrevious: No previous item, seeking to start")
                 seekTo(0)
+                play()
             }
         }
     }
 
     override fun seekToPreviousMediaItem() {
         coroutineScope.launch {
+            // When skipping tracks while paused, automatically resume playback
+            internalPlayWhenReady = true
             // Mirror seekToPrevious(): commit the incoming track (A+1) as current first.
             if (isCrossfading) {
                 Logger.d(TAG, "seekToPreviousMediaItem: committing incoming (A+1) first")
@@ -887,6 +898,7 @@ internal class CrossfadeExoPlayerAdapter(
                 seekTo(prevIndex, 0)
             } else {
                 Logger.d(TAG, "seekToPreviousMediaItem: No previous item — no-op")
+                play()
             }
         }
     }

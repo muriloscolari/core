@@ -475,6 +475,8 @@ class MpvPlayerAdapter(
 
     override fun seekToNext() {
         coroutineScope.launch {
+            // When skipping tracks while paused, automatically resume playback
+            internalPlayWhenReady = true
             // During crossfade A→A+1, "next" commits A+1 as current (the UI already shows A+1)
             // and then advances to A+2. Outside a crossfade it advances normally. hasNextMediaItem()
             // is evaluated AFTER the commit so it is relative to A+1, not A.
@@ -488,12 +490,17 @@ class MpvPlayerAdapter(
             } else if (wasCrossfading) {
                 // A+1 was the last track — stay on it; it is already promoted and announced.
                 Logger.d(TAG, "seekToNext: A+1 was the last track — staying on it")
+                play()
+            } else {
+                play()
             }
         }
     }
 
     override fun seekToPrevious() {
         coroutineScope.launch {
+            // When skipping tracks while paused, automatically resume playback
+            internalPlayWhenReady = true
             // Commit the incoming track (A+1) as current FIRST, so the 3-second rule below
             // evaluates against A+1's position and index rather than A's.
             if (isCrossfading) {
@@ -510,6 +517,7 @@ class MpvPlayerAdapter(
                 Logger.d(TAG, "seekToPrevious: pos=${cachedPosition}ms > ${positionThresholdMs}ms — seeking to start")
                 currentPlayer?.seekTo(0)
                 cachedPosition = 0
+                play()
             } else if (hasPreviousMediaItem()) {
                 Logger.d(TAG, "seekToPrevious: pos=${cachedPosition}ms <= ${positionThresholdMs}ms — going to previous track")
                 val prevIndex = getPreviousMediaItemIndex()
@@ -518,12 +526,15 @@ class MpvPlayerAdapter(
                 Logger.d(TAG, "seekToPrevious: No previous item, seeking to start")
                 currentPlayer?.seekTo(0)
                 cachedPosition = 0
+                play()
             }
         }
     }
 
     override fun seekToPreviousMediaItem() {
         coroutineScope.launch {
+            // When skipping tracks while paused, automatically resume playback
+            internalPlayWhenReady = true
             // Mirror seekToPrevious(): commit the incoming track (A+1) as current first, so
             // "previous" means the track before A+1 (i.e. A), not the one before A.
             if (isCrossfading) {
@@ -539,6 +550,7 @@ class MpvPlayerAdapter(
                 seekTo(prevIndex, 0)
             } else {
                 Logger.d(TAG, "seekToPreviousMediaItem: No previous item — no-op")
+                play()
             }
         }
     }
