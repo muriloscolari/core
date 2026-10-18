@@ -224,6 +224,7 @@ private val mediaServiceModule =
                 get<PlaylistRepository>(),
                 get<HomeRepository>(),
                 get<StreamRepository>(),
+                get<DataStoreManager>(),
             )
         }
 

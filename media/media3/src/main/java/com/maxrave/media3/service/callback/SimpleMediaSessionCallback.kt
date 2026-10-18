@@ -34,6 +34,7 @@ import com.maxrave.domain.mediaservice.handler.MediaPlayerHandler
 import com.maxrave.domain.mediaservice.handler.PlayerEvent
 import com.maxrave.domain.mediaservice.handler.PlaylistType
 import com.maxrave.domain.mediaservice.handler.QueueData
+import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.HomeRepository
 import com.maxrave.domain.repository.LocalPlaylistRepository
 import com.maxrave.domain.repository.PlaylistRepository
@@ -54,10 +55,12 @@ import com.maxrave.media3.extension.toMediaItem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 private const val TAG = "AndroidAuto"
 
@@ -72,6 +75,7 @@ internal class SimpleMediaSessionCallback(
     private val playlistRepository: PlaylistRepository,
     private val homeRepository: HomeRepository,
     private val streamRepository: StreamRepository,
+    private val dataStoreManager: DataStoreManager,
 ) : MediaLibrarySession.Callback {
     var toggleLike: () -> Unit = {
         mediaPlayerHandler.toggleLike()
@@ -385,19 +389,62 @@ internal class SimpleMediaSessionCallback(
                     }
 
                     PLAYLIST -> {
-                        localPlaylistRepository
-                            .getAllLocalPlaylists()
-                            .first()
-                            .sortedBy { it.inLibrary }
-                            .map {
+                        val playlistItems = mutableListOf<MediaItem>()
+                        val isLoggedIn = dataStoreManager.loggedIn.firstOrNull() == DataStoreManager.TRUE
+                        if (isLoggedIn) {
+                            playlistItems.add(
                                 browsableMediaItem(
-                                    "$PLAYLIST/${it.id}",
-                                    it.title,
-                                    "${it.tracks?.size ?: 0} ${context.getString(R.string.track)}",
-                                    it.thumbnail?.toUri(),
+                                    "$PLAYLIST/LM",
+                                    context.getString(R.string.youtube_liked_music),
+                                    "YouTube Music",
+                                    "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-songs-delhi-1200.png".toUri(),
                                     MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                ),
+                            )
+                            val ytPlaylists = playlistRepository.getLibraryPlaylist().firstOrNull()
+                            ytPlaylists?.forEach { yt ->
+                                playlistItems.add(
+                                    browsableMediaItem(
+                                        "$PLAYLIST/${yt.browseId}",
+                                        yt.title,
+                                        listOfNotNull(yt.author, yt.itemCount).joinToString(" • ").ifEmpty { null },
+                                        yt.thumbnails.lastOrNull()?.url?.toUri(),
+                                        MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                    ),
                                 )
                             }
+                        }
+
+                        val likedPlaylists = playlistRepository.getLikedPlaylists().firstOrNull() ?: emptyList()
+                        likedPlaylists.forEach { lp ->
+                            // Avoid adding duplicates if already present from YouTube library
+                            if (playlistItems.none { it.mediaId == "$PLAYLIST/${lp.id}" }) {
+                                playlistItems.add(
+                                    browsableMediaItem(
+                                        "$PLAYLIST/${lp.id}",
+                                        lp.title,
+                                        lp.author,
+                                        lp.thumbnails?.toUri(),
+                                        MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                    ),
+                                )
+                            }
+                        }
+
+                        val localPlaylists = localPlaylistRepository.getAllLocalPlaylists().firstOrNull() ?: emptyList()
+                        localPlaylists.sortedBy { it.inLibrary }.forEach { local ->
+                            playlistItems.add(
+                                browsableMediaItem(
+                                    "$PLAYLIST/local_${local.id}",
+                                    local.title,
+                                    "${local.tracks?.size ?: 0} ${context.getString(R.string.track)}",
+                                    local.thumbnail?.toUri(),
+                                    MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                ),
+                            )
+                        }
+
+                        playlistItems
                     }
 
                     HOME -> {
@@ -496,26 +543,61 @@ internal class SimpleMediaSessionCallback(
                             }
 
                             parentId.startsWith("$PLAYLIST/") -> {
-                                val playlistId = parentId.split("/").getOrNull(1)
-                                if (playlistId != null) {
-                                    val playlist =
-                                        localPlaylistRepository.getLocalPlaylist(playlistId.toLong()).lastOrNull()?.data
-                                    if (playlist != null) {
-                                        Logger.d(TAG, "onGetChildren: local playlist $playlistId")
-                                        val tracks = playlist.tracks
-                                        if (tracks.isNullOrEmpty()) {
-                                            emptyList()
+                                val playlistId = parentId.removePrefix("$PLAYLIST/")
+                                if (playlistId.startsWith("local_")) {
+                                    val localId = playlistId.removePrefix("local_").toLongOrNull()
+                                    if (localId != null) {
+                                        val playlist =
+                                            localPlaylistRepository.getLocalPlaylist(localId).lastOrNull()?.data
+                                        if (playlist != null) {
+                                            Logger.d(TAG, "onGetChildren: local playlist $playlistId")
+                                            val tracks = playlist.tracks
+                                            if (tracks.isNullOrEmpty()) {
+                                                emptyList()
+                                            } else {
+                                                songRepository
+                                                    .getSongsByListVideoId(tracks)
+                                                    .lastOrNull()
+                                                    ?.map { it.toMediaItem(parentId) } ?: emptyList()
+                                            }
                                         } else {
-                                            songRepository
-                                                .getSongsByListVideoId(tracks)
-                                                .lastOrNull()
-                                                ?.map { it.toMediaItem(parentId) } ?: emptyList()
+                                            emptyList()
                                         }
                                     } else {
                                         emptyList()
                                     }
                                 } else {
-                                    emptyList()
+                                    Logger.d(TAG, "onGetChildren: YouTube playlist $playlistId")
+                                    val playlistData =
+                                        playlistRepository
+                                            .getFullPlaylistData(playlistId, context.getString(R.string.view_count))
+                                            .lastOrNull()
+                                    val tracks = playlistData?.data?.tracks
+                                    if (!tracks.isNullOrEmpty()) {
+                                        playlistData.data?.toPlaylistEntity()?.let {
+                                            playlistRepository.insertAndReplacePlaylist(it)
+                                        }
+                                        tracks.map { track ->
+                                            track
+                                                .toSongEntity()
+                                                .also {
+                                                    songRepository.insertSong(it).first()
+                                                }.toMediaItem(parentId)
+                                        }
+                                    } else {
+                                        // Fallback to cached playlist in Room
+                                        val cachedPlaylist = playlistRepository.getPlaylist(playlistId).firstOrNull()
+                                        val cachedTracks = cachedPlaylist?.tracks
+                                        if (!cachedTracks.isNullOrEmpty()) {
+                                            songRepository
+                                                .getSongsByListVideoId(cachedTracks)
+                                                .firstOrNull()
+                                                ?.sortedBy { cachedTracks.indexOf(it.videoId) }
+                                                ?.map { it.toMediaItem(parentId) } ?: emptyList()
+                                        } else {
+                                            emptyList()
+                                        }
+                                    }
                                 }
                             }
 
@@ -647,50 +729,98 @@ internal class SimpleMediaSessionCallback(
                 PLAYLIST -> {
                     val songId = path.getOrNull(2) ?: return@future defaultResult
                     val playlistId = path.getOrNull(1) ?: return@future defaultResult
-                    Logger.d(TAG, "onSetMediaItems playlistId: $playlistId")
-                    var title = ""
-                    val songs =
-                        localPlaylistRepository
-                            .getLocalPlaylist(playlistId.toLong())
-                            .lastOrNull()
-                            ?.data
-                            ?.also {
-                                title = it.title
-                            }?.tracks
-                            ?.let {
-                                songRepository.getSongsByListVideoId(it)
-                            }?.lastOrNull()
-                    Logger.d(TAG, "onSetMediaItems songs: ${songs?.size ?: 0}")
-                    if (songs.isNullOrEmpty()) {
-                        defaultResult
-                    } else {
-                        var index = 0
-                        val clickedSong =
-                            songs
-                                .firstOrNull { it.videoId == songId }
+                    Logger.d(TAG, "onSetMediaItems playlistId: $playlistId, songId: $songId")
+                    if (playlistId.startsWith("local_")) {
+                        val localId = playlistId.removePrefix("local_").toLongOrNull() ?: return@future defaultResult
+                        var title = ""
+                        val songs =
+                            localPlaylistRepository
+                                .getLocalPlaylist(localId)
+                                .lastOrNull()
+                                ?.data
                                 ?.also {
-                                    index = songs.indexOf(it)
-                                }?.toTrack() ?: return@future defaultResult
-                        mediaPlayerHandler.setQueueData(
-                            QueueData.Data(
-                                listTracks = songs.toArrayListTrack(),
-                                firstPlayedTrack = clickedSong,
-                                playlistId = playlistId,
-                                playlistName = "${
-                                    context.getString(
-                                        R.string.playlists,
-                                    )
-                                } \"${title}\"",
-                                playlistType = PlaylistType.LOCAL_PLAYLIST,
-                                continuation = null,
-                            ),
-                        )
-                        mediaPlayerHandler.loadMediaItem(
-                            clickedSong,
-                            Config.PLAYLIST_CLICK,
-                            index,
-                        )
-                        defaultResult
+                                    title = it.title
+                                }?.tracks
+                                ?.let {
+                                    songRepository.getSongsByListVideoId(it)
+                                }?.lastOrNull()
+                        Logger.d(TAG, "onSetMediaItems local songs: ${songs?.size ?: 0}")
+                        if (songs.isNullOrEmpty()) {
+                            defaultResult
+                        } else {
+                            var index = 0
+                            val clickedSong =
+                                songs
+                                    .firstOrNull { it.videoId == songId }
+                                    ?.also {
+                                        index = songs.indexOf(it)
+                                    }?.toTrack() ?: return@future defaultResult
+                            mediaPlayerHandler.setQueueData(
+                                QueueData.Data(
+                                    listTracks = songs.toArrayListTrack(),
+                                    firstPlayedTrack = clickedSong,
+                                    playlistId = playlistId,
+                                    playlistName = "${
+                                        context.getString(
+                                            R.string.playlists,
+                                        )
+                                    } \"${title}\"",
+                                    playlistType = PlaylistType.LOCAL_PLAYLIST,
+                                    continuation = null,
+                                ),
+                            )
+                            mediaPlayerHandler.loadMediaItem(
+                                clickedSong,
+                                Config.PLAYLIST_CLICK,
+                                index,
+                            )
+                            defaultResult
+                        }
+                    } else {
+                        // YouTube Playlist (LM, browseId, etc.)
+                        val playlistEntity = playlistRepository.getPlaylist(playlistId).firstOrNull()
+                        val playlistTitle = playlistEntity?.title ?: if (playlistId == "LM") context.getString(R.string.youtube_liked_music) else ""
+                        val tracks = playlistEntity?.tracks
+                        val songs = if (!tracks.isNullOrEmpty()) {
+                            songRepository
+                                .getSongsByListVideoId(tracks)
+                                .firstOrNull()
+                                ?.sortedBy { tracks.indexOf(it.videoId) }
+                        } else {
+                            songRepository.getSongById(songId).firstOrNull()?.let { listOf(it) }
+                        }
+
+                        if (songs.isNullOrEmpty()) {
+                            defaultResult
+                        } else {
+                            var index = 0
+                            val clickedSong =
+                                songs
+                                    .firstOrNull { it.videoId == songId }
+                                    ?.also {
+                                        index = songs.indexOf(it)
+                                    }?.toTrack() ?: return@future defaultResult
+                            mediaPlayerHandler.setQueueData(
+                                QueueData.Data(
+                                    listTracks = songs.toArrayListTrack(),
+                                    firstPlayedTrack = clickedSong,
+                                    playlistId = playlistId,
+                                    playlistName = "${
+                                        context.getString(
+                                            R.string.playlists,
+                                        )
+                                    } \"${playlistTitle}\"",
+                                    playlistType = PlaylistType.PLAYLIST,
+                                    continuation = null,
+                                ),
+                            )
+                            mediaPlayerHandler.loadMediaItem(
+                                clickedSong,
+                                Config.PLAYLIST_CLICK,
+                                index,
+                            )
+                            defaultResult
+                        }
                     }
                 }
 
