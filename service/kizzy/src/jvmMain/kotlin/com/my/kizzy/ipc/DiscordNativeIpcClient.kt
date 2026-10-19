@@ -14,10 +14,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import java.io.Closeable
 import java.io.File
@@ -137,7 +135,7 @@ class DiscordNativeIpcClient(
                 if (connectedChannel != null) {
                     channel = connectedChannel
                     statusFlow.value = DiscordConnectionStatus.CONNECTED
-                    Logger.d(TAG, "Connected to Discord Desktop IPC")
+                    Logger.i(TAG, "Connected to Discord Desktop IPC")
 
                     // Push retained activity if available
                     lastActivityPayload?.let { payload ->
@@ -290,7 +288,7 @@ class DiscordNativeIpcClient(
                         }
                     }
                     OPCODE_CLOSE -> {
-                        Logger.d(TAG, "Discord IPC close received")
+                        Logger.i(TAG, "Discord IPC close received")
                         break
                     }
                     OPCODE_FRAME -> {
@@ -300,7 +298,7 @@ class DiscordNativeIpcClient(
             }
         } catch (e: Exception) {
             if (e !is CancellationException && e !is ClosedChannelException) {
-                Logger.d(TAG, "Discord IPC connection dropped: ${e.message}")
+                Logger.w(TAG, "Discord IPC connection dropped: ${e.message}")
             }
         } finally {
             closeCurrentChannel()
@@ -333,12 +331,6 @@ class DiscordNativeIpcClient(
         val startSeconds = calculatedStartTime / 1000
         val endSeconds = if (durationMillis > 0) calculatedEndTime / 1000 else null
 
-        val buttons = mutableListOf<Pair<String, String>>()
-        if (!song.videoId.isNullOrBlank()) {
-            buttons.add("Listen on SimpMusic" to "https://simpmusic.org/app/watch?v=${song.videoId}")
-        }
-        buttons.add("Visit SimpMusic" to "https://github.com/maxrave-dev/SimpMusic")
-
         val payload =
             buildSetActivityJson(
                 pid = currentPid,
@@ -347,12 +339,9 @@ class DiscordNativeIpcClient(
                 startTime = startSeconds,
                 endTime = endSeconds,
                 largeImage = song.thumbnails ?: APP_ICON,
-                largeText = song.albumName ?: song.title,
-                smallImage = APP_ICON,
-                smallText = song.artistName?.firstOrNull() ?: APP_NAME,
-                buttons = buttons,
             )
         lastActivityPayload = payload
+        Logger.i(TAG, "Updating Discord playing status: ${song.title}")
         if (isConnected) {
             sendFrame(payload)
         }
@@ -366,12 +355,6 @@ class DiscordNativeIpcClient(
         val artist = song.artistName?.joinToString(", ") ?: ""
         val stateText = if (artist.isNotBlank()) "$artist (Pausado)" else "Pausado"
 
-        val buttons = mutableListOf<Pair<String, String>>()
-        if (!song.videoId.isNullOrBlank()) {
-            buttons.add("Listen on SimpMusic" to "https://simpmusic.org/app/watch?v=${song.videoId}")
-        }
-        buttons.add("Visit SimpMusic" to "https://github.com/maxrave-dev/SimpMusic")
-
         val payload =
             buildSetActivityJson(
                 pid = currentPid,
@@ -380,12 +363,9 @@ class DiscordNativeIpcClient(
                 startTime = null,
                 endTime = null,
                 largeImage = song.thumbnails ?: APP_ICON,
-                largeText = song.albumName ?: song.title,
-                smallImage = APP_ICON,
-                smallText = "Pausado",
-                buttons = buttons,
             )
         lastActivityPayload = payload
+        Logger.i(TAG, "Updating Discord paused status: ${song.title}")
         if (isConnected) {
             sendFrame(payload)
         }
@@ -455,10 +435,6 @@ class DiscordNativeIpcClient(
         startTime: Long?,
         endTime: Long?,
         largeImage: String?,
-        largeText: String?,
-        smallImage: String?,
-        smallText: String?,
-        buttons: List<Pair<String, String>> = emptyList(),
     ): String {
         val activity =
             buildJsonObject {
@@ -472,20 +448,9 @@ class DiscordNativeIpcClient(
                         if (endTime != null) put("end", endTime)
                     }
                 }
-                putJsonObject("assets") {
-                    if (!largeImage.isNullOrBlank()) put("large_image", largeImage)
-                    if (!largeText.isNullOrBlank()) put("large_text", largeText)
-                    if (!smallImage.isNullOrBlank()) put("small_image", smallImage)
-                    if (!smallText.isNullOrBlank()) put("small_text", smallText)
-                }
-                if (buttons.isNotEmpty()) {
-                    putJsonArray("buttons") {
-                        for ((label, url) in buttons.take(2)) {
-                            addJsonObject {
-                                put("label", label)
-                                put("url", url)
-                            }
-                        }
+                if (!largeImage.isNullOrBlank()) {
+                    putJsonObject("assets") {
+                        put("large_image", largeImage)
                     }
                 }
             }
