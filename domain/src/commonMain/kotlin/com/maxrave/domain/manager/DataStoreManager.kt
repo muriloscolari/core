@@ -639,6 +639,14 @@ interface DataStoreManager {
 
     suspend fun setAutoBackupLastTime(time: Long)
 
+    val startWithSystem: Flow<String>
+
+    suspend fun setStartWithSystem(enabled: Boolean)
+
+    val startMinimizedToTray: Flow<String>
+
+    suspend fun setStartMinimizedToTray(enabled: Boolean)
+
     enum class ProxyType {
         PROXY_TYPE_HTTP,
         PROXY_TYPE_SOCKS,

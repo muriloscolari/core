@@ -1861,6 +1861,32 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val startWithSystem: Flow<String> =
+        settingsDataStore.data.map { preferences ->
+            preferences[START_WITH_SYSTEM] ?: FALSE
+        }
+
+    override suspend fun setStartWithSystem(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[START_WITH_SYSTEM] = if (enabled) TRUE else FALSE
+            }
+        }
+    }
+
+    override val startMinimizedToTray: Flow<String> =
+        settingsDataStore.data.map { preferences ->
+            preferences[START_MINIMIZED_TO_TRAY] ?: FALSE
+        }
+
+    override suspend fun setStartMinimizedToTray(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[START_MINIMIZED_TO_TRAY] = if (enabled) TRUE else FALSE
+            }
+        }
+    }
+
     companion object Settings {
         val APP_VERSION = stringPreferencesKey("app_version")
         val COOKIE = stringPreferencesKey("cookie")
@@ -1996,6 +2022,9 @@ internal class DataStoreManagerImpl(
         val AUTO_BACKUP_FREQUENCY = stringPreferencesKey("auto_backup_frequency")
         val AUTO_BACKUP_MAX_FILES = intPreferencesKey("auto_backup_max_files")
         val AUTO_BACKUP_LAST_TIME = longPreferencesKey("auto_backup_last_time")
+
+        val START_WITH_SYSTEM = stringPreferencesKey("start_with_system")
+        val START_MINIMIZED_TO_TRAY = stringPreferencesKey("start_minimized_to_tray")
     }
 }
 
