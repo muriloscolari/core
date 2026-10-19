@@ -62,7 +62,9 @@ kotlin {
         }
 
         jvmMain {
-            dependencies {}
+            dependencies {
+                implementation(libs.kotlinx.serialization.json)
+            }
         }
     }
 }

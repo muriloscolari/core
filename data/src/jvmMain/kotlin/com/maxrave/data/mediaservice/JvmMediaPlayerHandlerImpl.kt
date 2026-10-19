@@ -73,7 +73,9 @@ import com.maxrave.domain.utils.toListName
 import com.maxrave.domain.utils.toSongEntity
 import com.maxrave.domain.utils.toTrack
 import com.maxrave.logger.Logger
-import com.my.kizzy.DiscordRPC
+import com.maxrave.domain.mediaservice.handler.DiscordConnectionStatus
+import com.my.kizzy.ipc.DiscordNativeIpcClient
+import kotlin.time.Duration.Companion.minutes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -227,7 +229,11 @@ class JvmMediaPlayerHandlerImpl(
     override val player: MediaPlayerInterface = getKoin().get()
 
     @Volatile
-    private var discordRPC: DiscordRPC? = null
+    private var discordIpcClient: DiscordNativeIpcClient? = null
+    private var pauseTimeoutJob: Job? = null
+
+    private val _discordConnectionStatus = MutableStateFlow(DiscordConnectionStatus.DISABLED)
+    override val discordConnectionStatus: StateFlow<DiscordConnectionStatus> = _discordConnectionStatus.asStateFlow()
 
     /**
      * Built here rather than injected: it needs nothing this handler does not already hold, and
@@ -630,43 +636,41 @@ class JvmMediaPlayerHandlerImpl(
                 }
             val discordRPCEnabledJob =
                 launch {
-                    // Run Rich Presence only when enabled AND logged in (non-blank token); a blank-token
-                    // DiscordRPC loops reconnect forever (issue #2157). Combining both flows also tears
-                    // the RPC down as soon as the token is cleared on logout.
-                    combine(
-                        dataStoreManager.richPresenceEnabled,
-                        dataStoreManager.discordToken,
-                    ) { enabled, token ->
-                        enabled == TRUE && token.isNotBlank()
-                    }.distinctUntilChanged()
+                    dataStoreManager.richPresenceEnabled
+                        .map { it == TRUE }
+                        .distinctUntilChanged()
                         .collectLatest { shouldRun ->
                             if (shouldRun) {
-                                // Both branches below are independently idempotent: a toggle
-                                // on→off→on race must not skip (re)creating whichever of
-                                // discordRPC/rpcSenderJob dropped out (#Fix 6).
-                                if (discordRPC == null) {
-                                    discordRPC = DiscordRPC(dataStoreManager.discordToken.first())
+                                if (discordIpcClient == null) {
+                                    discordIpcClient =
+                                        DiscordNativeIpcClient(
+                                            coroutineScope = coroutineScope,
+                                            statusFlow = _discordConnectionStatus,
+                                        ).also {
+                                            it.start()
+                                        }
                                 }
                                 if (rpcSenderJob?.isActive != true) {
-                                    // One sender for the whole RPC lifetime: collectLatest cancels an
-                                    // in-flight send (socket spin-wait or artwork HTTP) the moment a
-                                    // newer snapshot arrives, giving both ordering and latest-wins.
                                     rpcSenderJob =
                                         coroutineScope.launch(Dispatchers.IO) {
                                             var lastHandledSeq = 0L
                                             rpcSnapshotFlow.filterNotNull().collectLatest { snap ->
                                                 if (snap.seq < lastHandledSeq) return@collectLatest
                                                 lastHandledSeq = snap.seq
-                                                // Drop it if playback stopped meanwhile — e.g. a
-                                                // seek's updateDiscordRpc() suspends at
-                                                // playbackSpeed.first() and its snapshot lands here
-                                                // after onIsPlayingChanged(false) already closed the
-                                                // RPC (Fix 1). controlState.value is a safe field
-                                                // read from Dispatchers.IO, unlike player.isPlaying.
-                                                if (!controlState.value.isPlaying) return@collectLatest
-                                                discordRPC
-                                                    ?.updateSong(snap.progressMs, snap.durationMs, snap.speed, snap.song)
-                                                    ?.onFailure { if (it !is CancellationException) Logger.e(TAG, "Discord RPC update failed: ${it.message}") }
+                                                if (!controlState.value.isPlaying) {
+                                                    discordIpcClient?.updatePaused(
+                                                        snap.song,
+                                                        snap.progressMs,
+                                                        snap.durationMs,
+                                                    )
+                                                    return@collectLatest
+                                                }
+                                                discordIpcClient?.updatePlaying(
+                                                    snap.song,
+                                                    snap.progressMs,
+                                                    snap.durationMs,
+                                                    snap.speed,
+                                                )
                                             }
                                         }
                                     nowPlayingState.value.songEntity?.let { song ->
@@ -674,21 +678,13 @@ class JvmMediaPlayerHandlerImpl(
                                     }
                                 }
                             } else {
-                                // NonCancellable: this cleanup must run to completion even if a newer
-                                // upstream emission cancels this collectLatest action mid-flight,
-                                // otherwise the next `shouldRun` pass could see a half-torn-down state
-                                // (Fix 6).
                                 withContext(NonCancellable) {
                                     rpcSenderJob?.cancel()
                                     rpcSenderJob = null
-                                    if (discordRPC?.isRpcRunning() == true) {
-                                        discordRPC?.closeRPC()
-                                    }
-                                    discordRPC = null
-                                    // Drop any retained snapshot so a relaunched sender (fresh
-                                    // lastHandledSeq = 0) can't replay a stale update to the freshly
-                                    // created socket on an off→on toggle (Fix B). rpcEventSeq itself is
-                                    // NOT reset — it must stay monotonic across toggles.
+                                    pauseTimeoutJob?.cancel()
+                                    pauseTimeoutJob = null
+                                    discordIpcClient?.stop()
+                                    discordIpcClient = null
                                     rpcSnapshotFlow.value = null
                                 }
                             }
@@ -2696,10 +2692,10 @@ class JvmMediaPlayerHandlerImpl(
         clearMacOSNowPlayingInfo()
         macOSMediaIntegration?.release()
         try {
-            if (discordRPC?.isRpcRunning() == true) {
-                discordRPC?.closeRPC()
-            }
-            discordRPC = null
+            pauseTimeoutJob?.cancel()
+            pauseTimeoutJob = null
+            discordIpcClient?.stop()
+            discordIpcClient = null
             // Save state first
             mayBeSaveRecentSong(true)
             mayBeSavePlaybackState()
@@ -2812,14 +2808,29 @@ class JvmMediaPlayerHandlerImpl(
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         _controlState.value = _controlState.value.copy(isPlaying = isPlaying)
         if (isPlaying) {
+            pauseTimeoutJob?.cancel()
+            pauseTimeoutJob = null
             startProgressUpdate()
             nowPlayingState.value.songEntity?.let { updateDiscordRpc(it) }
         } else {
             stopProgressUpdate()
             mayBeSaveRecentSong()
             mayBeSavePlaybackState()
-            if (discordRPC?.isRpcRunning() == true) {
-                discordRPC?.closeRPC()
+            val song = nowPlayingState.value.songEntity
+            if (song != null) {
+                updateDiscordRpc(song)
+                pauseTimeoutJob?.cancel()
+                pauseTimeoutJob =
+                    coroutineScope.launch(Dispatchers.IO) {
+                        delay(5.minutes)
+                        discordIpcClient?.clearActivity()
+                    }
+            } else {
+                pauseTimeoutJob?.cancel()
+                pauseTimeoutJob = null
+                coroutineScope.launch(Dispatchers.IO) {
+                    discordIpcClient?.clearActivity()
+                }
             }
         }
         updateNextPreviousTrackAvailability()
@@ -2828,10 +2839,10 @@ class JvmMediaPlayerHandlerImpl(
 
     override fun onSeeked(positionMs: Long) {
         // Paused, the progress ticker is stopped, so nothing else tells the UI the position moved:
-        // every seek bar, clock and lyric line would wait for play to catch up (#2480). Unlike the
-        // Android twin there is no Discord refresh here: each seek branch already does it.
+        // every seek bar, clock and lyric line would wait for play to catch up (#2480).
         if (!player.isPlaying) {
             _simpleMediaState.value = SimpleMediaState.Progress(positionMs)
+            nowPlayingState.value.songEntity?.let { updateDiscordRpc(it) }
         }
     }
 
@@ -2839,6 +2850,8 @@ class JvmMediaPlayerHandlerImpl(
         mediaItem: GenericMediaItem?,
         reason: Int,
     ) {
+        pauseTimeoutJob?.cancel()
+        pauseTimeoutJob = null
         resetPositionSmoothing()
         Logger.w(TAG, "Checking current state before transition ${simpleMediaState.value}")
         val lastPlayed = nowPlayingState.value.songEntity

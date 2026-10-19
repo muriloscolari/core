@@ -30,6 +30,8 @@ interface MediaPlayerHandler {
     val format: StateFlow<NewFormatEntity?>
     val currentSongIndex: StateFlow<Int>
     val castState: StateFlow<GenericCastState>
+    val discordConnectionStatus: StateFlow<DiscordConnectionStatus>
+        get() = kotlinx.coroutines.flow.MutableStateFlow(DiscordConnectionStatus.DISABLED)
 
     // Listeners
     var onUpdateNotification: (List<GenericCommandButton>) -> Unit
@@ -420,4 +422,11 @@ sealed class ToastType(
     data class SponsorBlockSkip(
         val category: String,
     ) : ToastType(category)
+}
+
+enum class DiscordConnectionStatus {
+    DISABLED,
+    CONNECTING,
+    CONNECTED,
+    NOT_RUNNING,
 }
