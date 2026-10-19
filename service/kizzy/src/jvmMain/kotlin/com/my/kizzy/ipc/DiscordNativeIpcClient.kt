@@ -28,6 +28,7 @@ import java.nio.ByteOrder
 import java.nio.channels.ClosedChannelException
 import java.nio.channels.SocketChannel
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 interface IpcChannel : Closeable {
     fun writeFully(data: ByteArray)
@@ -203,6 +204,7 @@ class DiscordNativeIpcClient(
                 socketChannel.connect(address)
                 val chan = UnixDomainIpcChannel(socketChannel)
                 if (performHandshake(chan)) {
+                    Logger.i(TAG, "Discord IPC socket found at $path")
                     return chan
                 } else {
                     chan.close()
@@ -236,11 +238,16 @@ class DiscordNativeIpcClient(
                 paths.add("$xdg/$socketName")
                 paths.add("$xdg/app/com.discordapp.Discord/$socketName")
                 paths.add("$xdg/snap.discord/$socketName")
+                // Vesktop (native and Flatpak) exposes the RPC socket in its sandbox runtime dir
+                paths.add("$xdg/app/dev.vencord.Vesktop/$socketName")
+                paths.add("$xdg/app/dev.vencord.Vesktop/xdg-run/$socketName")
             }
             for (runUser in runUserDirs) {
                 paths.add("$runUser/$socketName")
                 paths.add("$runUser/app/com.discordapp.Discord/$socketName")
                 paths.add("$runUser/snap.discord/$socketName")
+                paths.add("$runUser/app/dev.vencord.Vesktop/$socketName")
+                paths.add("$runUser/app/dev.vencord.Vesktop/xdg-run/$socketName")
             }
             if (!tmpdir.isNullOrBlank()) {
                 paths.add("$tmpdir/$socketName")
@@ -254,13 +261,36 @@ class DiscordNativeIpcClient(
                 paths.add("$home/.var/app/com.discordapp.Discord/data/$socketName")
                 paths.add("$home/.var/app/com.discordapp.Discord/$socketName")
                 paths.add("$home/snap/discord/current/$socketName")
+                paths.add("$home/.var/app/dev.vencord.Vesktop/data/$socketName")
+                paths.add("$home/.var/app/dev.vencord.Vesktop/$socketName")
+                paths.add("$home/.var/app/dev.vencord.Vesktop/config/$socketName")
             }
         }
         return paths.distinct()
     }
 
     private fun performHandshake(channel: IpcChannel): Boolean {
-        try {
+        // A stale socket (e.g. Discord closed while the socket file remains) can make
+        // readFully block forever, so a watchdog closes the channel if no READY arrives.
+        // A plain daemon thread is used so the timeout also fires when the caller is cancelled.
+        val handshakeFinished = AtomicBoolean(false)
+        val watchdog =
+            Thread({
+                try {
+                    Thread.sleep(HANDSHAKE_TIMEOUT_MS)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
+                if (handshakeFinished.compareAndSet(false, true)) {
+                    Logger.w(TAG, "Discord IPC handshake timed out after ${HANDSHAKE_TIMEOUT_MS}ms")
+                    channel.close()
+                }
+            }, "discord-ipc-handshake-timeout").apply {
+                isDaemon = true
+                start()
+            }
+
+        return try {
             val handshakeJson =
                 buildJsonObject {
                     put("v", 1)
@@ -268,10 +298,23 @@ class DiscordNativeIpcClient(
                 }.toString()
 
             sendPacket(channel, OPCODE_HANDSHAKE, handshakeJson)
-            val (opcode, response) = readPacket(channel)
-            return opcode == OPCODE_FRAME && response.contains("READY")
+
+            // Discord/arRPC may emit PING or non-READY frames before the READY dispatch.
+            while (channel.isOpen) {
+                val (opcode, response) = readPacket(channel)
+                when (opcode) {
+                    OPCODE_FRAME -> if (response.contains("READY")) return true
+                    OPCODE_PING -> sendPacket(channel, OPCODE_PONG, response)
+                    OPCODE_CLOSE -> return false
+                }
+            }
+            false
         } catch (e: Exception) {
-            return false
+            Logger.w(TAG, "Discord IPC handshake failed: ${e.message}")
+            false
+        } finally {
+            handshakeFinished.set(true)
+            watchdog.interrupt()
         }
     }
 
@@ -486,6 +529,7 @@ class DiscordNativeIpcClient(
         private const val APP_ICON =
             "https://fra.cloud.appwrite.io/v1/storage/buckets/683f1f620010ba0fa5b1/files/69007bc8001a28a7cea8/view?project=67ec0369002bd8a96885"
         private const val RECONNECT_INTERVAL_MS = 10_000L
+        private const val HANDSHAKE_TIMEOUT_MS = 5_000L
 
         private const val OPCODE_HANDSHAKE = 0
         private const val OPCODE_FRAME = 1
