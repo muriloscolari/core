@@ -439,7 +439,7 @@ class DiscordNativeIpcClient(
         val activity =
             buildJsonObject {
                 put("name", APP_NAME)
-                put("type", 2) // LISTENING
+                put("type", 0) // PLAYING (Standard Discord RPC)
                 put("details", details)
                 if (state.isNotBlank()) put("state", state)
                 if (startTime != null || endTime != null) {
