@@ -1085,9 +1085,7 @@ class MpvPlayerAdapter(
             // use-after-free. The field itself is set synchronously so the getter reads back what
             // was just written; only the mpv calls are deferred.
             coroutineScope.launch {
-                // mpv volume: 0-100 (100 = unattenuated). Map our 0.0-1.0 to 0-100.
-                val percent = (internalVolume * 100).toInt()
-                forEachLiveHandle { it.setMasterVolume(percent) }
+                forEachLiveHandle { it.setMasterVolume(internalVolume.toDouble()) }
             }
             notifyListeners { onVolumeChanged(internalVolume) }
         }
@@ -1152,7 +1150,7 @@ class MpvPlayerAdapter(
      */
     private fun MpvPlayer.applyPlaybackLevels() {
         setVolumeLevels(
-            master = (internalVolume * 100).toInt(),
+            masterFraction = internalVolume.toDouble(),
             sleep = (internalSleepFadeFactor * 100).toInt(),
         )
         setRate(internalPlaybackSpeed)

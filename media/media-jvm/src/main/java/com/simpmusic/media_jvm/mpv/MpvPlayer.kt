@@ -5,6 +5,7 @@ import com.maxrave.logger.Logger
 import com.sun.jna.Memory
 import com.sun.jna.Pointer
 import java.util.Locale
+import kotlin.math.pow
 
 private const val TAG = "MpvPlayer"
 
@@ -634,7 +635,7 @@ class MpvPlayer private constructor(
     private val volumeLock = Any()
 
     @Volatile
-    private var masterPercent = 100
+    private var masterFraction: Double = 1.0
 
     @Volatile
     private var fadePercent = 100
@@ -646,14 +647,18 @@ class MpvPlayer private constructor(
      * The pipeline volume — what the volume slider controls. Must NOT be touched while a crossfade
      * is running; ramp with [setFadeVolume] instead.
      *
-     * @param volume 0..100, matching `VlcPlayer.setVolume`. mpv's `volume` is natively 0..100.
+     * @param fraction 0.0..1.0 matching UI fraction.
      */
-    fun setMasterVolume(volume: Int) {
+    fun setMasterVolume(fraction: Double) {
         if (isReleased) return
         synchronized(volumeLock) {
-            masterPercent = volume.coerceIn(0, 100)
+            masterFraction = fraction.coerceIn(0.0, 1.0)
             applyVolume()
         }
+    }
+
+    fun setMasterVolume(volume: Int) {
+        setMasterVolume(volume.coerceIn(0, 100) / 100.0)
     }
 
     /**
@@ -671,11 +676,6 @@ class MpvPlayer private constructor(
 
     /**
      * The sleep timer's fade-out, 0..100 where 100 means "no attenuation".
-     *
-     * Rides on the master rather than on [setFadeVolume] for two reasons: the crossfade ramp is
-     * reset to 100 every time a handle becomes current, which would wipe a fade still in progress,
-     * and the master reaches the device mixer, so it takes effect immediately instead of trailing
-     * the audio-output buffer by a second or two — a ramp measured in seconds cannot afford that lag.
      */
     fun setSleepFadeVolume(volume: Int) {
         if (isReleased) return
@@ -688,40 +688,40 @@ class MpvPlayer private constructor(
     /**
      * Set the master and the sleep fade together, for a handle that is being brought up to the
      * levels already in force elsewhere.
-     *
-     * Doing it in two calls would publish the new master against the *old* sleep fade first, and
-     * since `ao-volume` is shared across handles that intermediate value is audible on whatever is
-     * playing — a full-volume blip in the middle of a fade.
      */
     fun setVolumeLevels(
-        master: Int,
+        masterFraction: Double,
         sleep: Int,
     ) {
         if (isReleased) return
         synchronized(volumeLock) {
-            masterPercent = master.coerceIn(0, 100)
-            sleepPercent = sleep.coerceIn(0, 100)
+            this.masterFraction = masterFraction.coerceIn(0.0, 1.0)
+            this.sleepPercent = sleep.coerceIn(0, 100)
             applyVolume()
         }
     }
 
+    fun setVolumeLevels(
+        master: Int,
+        sleep: Int,
+    ) {
+        setVolumeLevels(master.coerceIn(0, 100) / 100.0, sleep)
+    }
+
     /**
-     * `volume` is mpv's *software* volume: applied inside the filter chain, so audio already queued
-     * in the audio-output buffer keeps playing at the previous level — audible as a couple of
-     * seconds of lag after the slider is released. `ao-volume` drives the audio device's own mixer
-     * and takes effect immediately, so the master and the sleep fade ride on that and the software
-     * volume is left to carry the crossfade ramp alone (mpv applies the two independently — they
-     * multiply). When the audio output exposes no mixer control, all three collapse into the
-     * software volume so the user's level is still honoured.
+     * Volume is applied via mpv's software volume with a cubic perceptual curve.
+     * Human hearing perceives loudness logarithmically. A linear scale makes 1% sound extremely loud (-40 dB).
+     * Cubing the fraction gives smooth, natural attenuation where 1-10% is whisper quiet.
+     * Software volume in mpv natively accepts 0.0..100.0.
+     * We scale by fadePercent and sleepPercent for seamless crossfading and sleep timer.
+     * Crucially, we do NOT touch ao-volume so the OS mixer (e.g. Windows Volume Mixer) operates
+     * independently and is never hijacked or overwritten.
      */
     private fun applyVolume() =
         synchronized(volumeLock) {
-            val master = masterPercent * sleepPercent / 100.0
-            if (setPropertyDouble("ao-volume", master, logFailure = false) >= 0) {
-                setPropertyDouble("volume", fadePercent.toDouble())
-            } else {
-                setPropertyDouble("volume", master * fadePercent / 100.0)
-            }
+            val masterPerceptual = masterFraction.pow(3.0) * (sleepPercent / 100.0)
+            val finalVolume = masterPerceptual * (fadePercent / 100.0) * 100.0
+            setPropertyDouble("volume", finalVolume.coerceIn(0.0, 100.0))
         }
 
     fun setMute(mute: Boolean) {
