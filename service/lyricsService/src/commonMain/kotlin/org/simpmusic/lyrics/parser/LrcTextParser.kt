@@ -120,10 +120,12 @@ fun parseRichSyncLyrics(data: String): Lyrics {
 }
 
 /**
- * Parse TTML (Timed Text Markup Language) lyrics from BetterLyrics.
+ * Parse TTML (Timed Text Markup Language) lyrics from BetterLyrics / Apple Music.
  * Supports both line-synced and word-by-word synced lyrics.
  *
- * TTML format: `<p begin="M:SS.mmm" end="M:SS.mmm">` contains `<span begin="..." end="...">word</span>`
+ * TTML format: `<p begin="M:SS.mmm" end="M:SS.mmm">` contains `<span begin="..." end="...">syllable/word</span>`
+ * When syllables within a word are segmented by <span> tags without whitespace between them,
+ * they are joined into full words so words don't get chopped up (e.g. "al"+"rea"+"dy " -> "already ").
  * If spans with timing exist → word-by-word (RICH_SYNCED)
  * If no spans → line-synced (LINE_SYNCED)
  */
@@ -131,30 +133,109 @@ fun parseTtmlLyrics(data: String): Lyrics {
     val linesLyrics = ArrayList<Lyrics.LyricsX.Line>()
     var hasWordTiming = false
 
-    // Match each <p ...>...</p> element (use [\s\S] instead of . with DOT_MATCHES_ALL)
-    val pRegex = Regex("""<p\s[^>]*begin="([^"]+)"[^>]*end="([^"]+)"[^>]*>([\s\S]*?)</p>""")
-    // Match each <span ...>word</span> element
-    val spanRegex = Regex("""<span\s[^>]*begin="([^"]+)"[^>]*end="([^"]+)"[^>]*>(.*?)</span>""")
+    // Match each <p ...>...</p> element
+    val pRegex = Regex("""<p\b([^>]*)>([\s\S]*?)</p>""", RegexOption.IGNORE_CASE)
+    val spanTagRegex = Regex("""<span\b([^>]*)>([\s\S]*?)</span>""", RegexOption.IGNORE_CASE)
+    val beginRegex = Regex("""begin="([^"]+)"""", RegexOption.IGNORE_CASE)
+    val endRegex = Regex("""end="([^"]+)"""", RegexOption.IGNORE_CASE)
 
     for (pMatch in pRegex.findAll(data)) {
-        val lineBegin = parseTtmlTime(pMatch.groupValues[1])
-        val lineEnd = parseTtmlTime(pMatch.groupValues[2])
-        val innerContent = pMatch.groupValues[3]
+        val pAttrs = pMatch.groupValues[1]
+        val innerContent = pMatch.groupValues[2]
 
-        val spans = spanRegex.findAll(innerContent).toList()
+        val lineBegin = beginRegex.find(pAttrs)?.groupValues?.get(1)?.let { parseTtmlTime(it) } ?: 0L
+        val lineEnd = endRegex.find(pAttrs)?.groupValues?.get(1)?.let { parseTtmlTime(it) } ?: 0L
 
-        if (spans.isNotEmpty()) {
+        val spans = spanTagRegex.findAll(innerContent).toList()
+        val timedSpans = spans.filter { beginRegex.containsMatchIn(it.groupValues[1]) }
+
+        if (timedSpans.isNotEmpty()) {
             hasWordTiming = true
-            // Build word-by-word content with <MM:SS.mm> timing format for rich sync
             val wordParts = StringBuilder()
-            for (span in spans) {
-                val spanBegin = parseTtmlTime(span.groupValues[1])
-                val word = span.groupValues[3].trim()
-                if (word.isNotEmpty()) {
-                    val beginFormatted = formatMsToLrc(spanBegin)
-                    wordParts.append("<$beginFormatted>$word ")
+
+            var currentWord = StringBuilder()
+            var currentWordStartMs: Long? = null
+
+            for (i in timedSpans.indices) {
+                val spanMatch = timedSpans[i]
+                val spanAttrs = spanMatch.groupValues[1]
+                val spanBegin = parseTtmlTime(beginRegex.find(spanAttrs)!!.groupValues[1])
+                val rawContent = decodeHtmlEntities(spanMatch.groupValues[2].replace(Regex("<[^>]*>"), ""))
+
+                // Check gap before this span
+                val lastEndPos = if (i == 0) 0 else timedSpans[i - 1].range.last + 1
+                val gapBefore = innerContent.substring(lastEndPos, spanMatch.range.first)
+                val gapBeforeHasBreak = gapBefore.any { it.isWhitespace() } || gapBefore.contains("<br", ignoreCase = true)
+
+                // Check gap after this span
+                val nextStartPos = if (i < timedSpans.lastIndex) timedSpans[i + 1].range.first else innerContent.length
+                val gapAfter = innerContent.substring(spanMatch.range.last + 1, nextStartPos)
+                val gapAfterHasBreak = gapAfter.any { it.isWhitespace() } || gapAfter.contains("<br", ignoreCase = true) || i == timedSpans.lastIndex
+
+                val spanHasLeadingSpace = rawContent.isNotEmpty() && rawContent.first().isWhitespace()
+                val spanHasTrailingSpace = rawContent.isNotEmpty() && rawContent.last().isWhitespace()
+
+                // If there is whitespace between words before this span, close previous word
+                if ((gapBeforeHasBreak || spanHasLeadingSpace) && currentWord.isNotEmpty() && currentWordStartMs != null) {
+                    val beginFormatted = formatMsToLrc(currentWordStartMs)
+                    wordParts.append("<$beginFormatted>$currentWord ")
+                    currentWord.clear()
+                    currentWordStartMs = null
+                }
+
+                val trimmedText = rawContent.trim()
+                if (trimmedText.isNotEmpty()) {
+                    val tokens = trimmedText.split(Regex("""\s+"""))
+                    if (tokens.size == 1) {
+                        if (currentWord.isEmpty()) {
+                            currentWordStartMs = spanBegin
+                        }
+                        currentWord.append(tokens[0])
+
+                        if (spanHasTrailingSpace || gapAfterHasBreak) {
+                            val beginFormatted = formatMsToLrc(currentWordStartMs!!)
+                            wordParts.append("<$beginFormatted>$currentWord ")
+                            currentWord.clear()
+                            currentWordStartMs = null
+                        }
+                    } else {
+                        // First token completes current word
+                        if (currentWord.isEmpty()) {
+                            currentWordStartMs = spanBegin
+                        }
+                        currentWord.append(tokens[0])
+                        val beginFormatted = formatMsToLrc(currentWordStartMs!!)
+                        wordParts.append("<$beginFormatted>$currentWord ")
+                        currentWord.clear()
+                        currentWordStartMs = null
+
+                        // Intermediate tokens are full words
+                        for (j in 1 until tokens.size - 1) {
+                            val midBeginFormatted = formatMsToLrc(spanBegin)
+                            wordParts.append("<$midBeginFormatted>${tokens[j]} ")
+                        }
+
+                        // Last token
+                        currentWordStartMs = spanBegin
+                        currentWord.append(tokens.last())
+                        if (spanHasTrailingSpace || gapAfterHasBreak) {
+                            val lastBeginFormatted = formatMsToLrc(currentWordStartMs)
+                            wordParts.append("<$lastBeginFormatted>$currentWord ")
+                            currentWord.clear()
+                            currentWordStartMs = null
+                        }
+                    }
                 }
             }
+
+            // Flush any remaining word
+            if (currentWord.isNotEmpty() && currentWordStartMs != null) {
+                val beginFormatted = formatMsToLrc(currentWordStartMs)
+                wordParts.append("<$beginFormatted>$currentWord ")
+                currentWord.clear()
+                currentWordStartMs = null
+            }
+
             val words = wordParts.toString().trimEnd()
             if (words.isNotBlank()) {
                 linesLyrics.add(
@@ -168,7 +249,7 @@ fun parseTtmlLyrics(data: String): Lyrics {
             }
         } else {
             // No spans — extract plain text (strip any remaining tags)
-            val plainText = innerContent.replace(Regex("<[^>]*>"), "").trim()
+            val plainText = innerContent.replace(Regex("<[^>]*>"), "").replace(Regex("""\s+"""), " ").trim()
             if (plainText.isNotBlank()) {
                 linesLyrics.add(
                     Lyrics.LyricsX.Line(
