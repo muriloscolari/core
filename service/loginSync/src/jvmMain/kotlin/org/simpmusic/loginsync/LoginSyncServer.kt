@@ -49,6 +49,9 @@ class LoginSyncServer(
 
         /** A payload could not be taken; [reason] is shown to the user. */
         fun onRejected(reason: String)
+
+        /** Details about the local device and available sync options returned to the phone on hello. */
+        suspend fun getDeviceName(): DeviceName = localDeviceName()
     }
 
     /** What the QR needs besides an address. */
@@ -110,7 +113,7 @@ class LoginSyncServer(
                 when (kind) {
                     LoginSyncWire.HELLO -> {
                         handler.onHello()
-                        LoginSyncWire.json.encodeToString(DeviceName.serializer(), withContext(Dispatchers.IO) { device }).encodeToByteArray()
+                        LoginSyncWire.json.encodeToString(DeviceName.serializer(), handler.getDeviceName()).encodeToByteArray()
                     }
 
                     LoginSyncWire.PAYLOAD -> {
@@ -185,7 +188,7 @@ fun reachableAddresses(): List<LocalAddress> =
 private val HOST_ONLY_NIC_PREFIXES = listOf("docker", "br-", "veth", "virbr", "vboxnet", "vmnet", "podman", "cni")
 
 /** The name the user knows this computer by. Blocking on macOS (runs scutil). */
-private fun localDeviceName(): DeviceName {
+fun localDeviceName(): DeviceName {
     val osName = System.getProperty("os.name").orEmpty()
     val isMac = osName.startsWith("Mac")
     val name =

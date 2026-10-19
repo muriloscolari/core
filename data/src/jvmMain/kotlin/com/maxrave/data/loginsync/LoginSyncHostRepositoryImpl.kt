@@ -3,6 +3,8 @@ package com.maxrave.data.loginsync
 import com.maxrave.domain.data.model.loginsync.LoginSyncHostState
 import com.maxrave.domain.data.model.loginsync.LoginSyncService
 import com.maxrave.domain.data.model.loginsync.NetAddress
+import com.maxrave.domain.data.model.loginsync.SettingsCategory
+import com.maxrave.domain.data.model.loginsync.SyncDirection
 import com.maxrave.domain.repository.LoginSyncHostRepository
 import com.maxrave.logger.Logger
 import kotlinx.coroutines.CancellationException
@@ -16,7 +18,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.simpmusic.loginsync.DeviceName
 import org.simpmusic.loginsync.LoginSyncServer
+import org.simpmusic.loginsync.localDeviceName
 import org.simpmusic.loginsync.reachableAddresses
 
 private const val TAG = "LoginSyncHost"
@@ -42,6 +46,8 @@ internal class LoginSyncHostRepositoryImpl(
     private var addresses = emptyList<NetAddress>()
     private var selected: NetAddress? = null
     private var restored = emptyList<LoginSyncService>()
+    private var restoredSettings = emptyList<SettingsCategory>()
+    private var syncDirection = SyncDirection.PUSH
 
     override suspend fun start() =
         lifecycle.withLock {
@@ -95,18 +101,60 @@ internal class LoginSyncHostRepositoryImpl(
         _state.value = LoginSyncHostState.Connected
     }
 
+    override suspend fun getDeviceName(): DeviceName {
+        val base = localDeviceName()
+        val signedIn = store.signedIn().map { it.name }
+        return DeviceName(
+            name = base.name,
+            os = base.os,
+            availableLogins = signedIn,
+            hasSettings = true,
+        )
+    }
+
     override fun onCancel() {
         _state.value = waiting()
     }
 
     override suspend fun onPayload(payload: ByteArray): ByteArray {
         val bundle = loginSyncJson.decodeFromString(LoginBundle.serializer(), payload.decodeToString())
-        restored = store.restore(bundle)
-        return loginSyncJson.encodeToString(LoginSyncAck.serializer(), LoginSyncAck(restored.map { it.name })).encodeToByteArray()
+        syncDirection = bundle.direction
+        return if (bundle.direction == SyncDirection.PUSH) {
+            restored = store.restore(bundle)
+            restoredSettings = bundle.settings?.let { store.restoreSettings(it) } ?: emptyList()
+            val ack =
+                LoginSyncAck(
+                    services = restored.map { it.name },
+                    settings = restoredSettings.map { it.name },
+                    direction = SyncDirection.PUSH,
+                )
+            loginSyncJson.encodeToString(LoginSyncAck.serializer(), ack).encodeToByteArray()
+        } else {
+            val requestedServices = bundle.requestedLogins.mapNotNull { name -> LoginSyncService.entries.firstOrNull { it.name == name } }.toSet()
+            val requestedCategories = bundle.requestedSettings.mapNotNull { name -> SettingsCategory.entries.firstOrNull { it.name == name } }.toSet()
+            val returnLogins = store.bundle(requestedServices)
+            val returnSettings = store.bundleSettings(requestedCategories)
+            restored = requestedServices.toList()
+            restoredSettings = requestedCategories.toList()
+            val ack =
+                LoginSyncAck(
+                    services = restored.map { it.name },
+                    settings = restoredSettings.map { it.name },
+                    direction = SyncDirection.PULL,
+                    returnLogins = returnLogins,
+                    returnSettings = returnSettings,
+                )
+            loginSyncJson.encodeToString(LoginSyncAck.serializer(), ack).encodeToByteArray()
+        }
     }
 
     override fun onDelivered() {
-        _state.value = LoginSyncHostState.Done(restored)
+        _state.value =
+            LoginSyncHostState.Done(
+                services = restored,
+                settings = restoredSettings,
+                direction = syncDirection,
+            )
     }
 
     override fun onRejected(reason: String) {

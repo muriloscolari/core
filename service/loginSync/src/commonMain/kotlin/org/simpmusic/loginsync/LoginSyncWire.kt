@@ -48,6 +48,8 @@ internal object LoginSyncWire {
 data class DeviceName(
     val name: String,
     val os: String,
+    val availableLogins: List<String> = emptyList(),
+    val hasSettings: Boolean = true,
 )
 
 class LoginSyncTransportException(

@@ -1,6 +1,6 @@
 package com.maxrave.domain.data.model.loginsync
 
-/** A sign-in the phone can hand to the desktop. Only sign-ins travel — never settings or API keys. */
+/** A sign-in the phone can hand to the desktop or pull from it. */
 enum class LoginSyncService(
     val label: String,
 ) {
@@ -10,10 +10,27 @@ enum class LoginSyncService(
     LASTFM("Last.fm"),
 }
 
+/** Settings categories that can be synchronized between devices. */
+enum class SettingsCategory(
+    val label: String,
+) {
+    AUDIO("Áudio & Reprodução"),
+    APPEARANCE("Aparência & Tema"),
+    CONTENT("Conteúdo & Letras"),
+}
+
+/** Direction of the sync chosen by the user on the phone. */
+enum class SyncDirection {
+    PUSH, // Phone -> Desktop
+    PULL, // Desktop -> Phone
+}
+
 /** The computer the phone is about to trust, as the computer names itself. */
 data class DesktopInfo(
     val name: String,
     val os: String,
+    val availableLogins: List<LoginSyncService> = emptyList(),
+    val hasSettings: Boolean = true,
 )
 
 /** One address the computer can be reached on, labelled by the interface it belongs to. */
@@ -37,6 +54,8 @@ sealed interface LoginSyncHostState {
 
     data class Done(
         val services: List<LoginSyncService>,
+        val settings: List<SettingsCategory> = emptyList(),
+        val direction: SyncDirection = SyncDirection.PUSH,
     ) : LoginSyncHostState
 
     data object Expired : LoginSyncHostState
