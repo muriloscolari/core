@@ -38,7 +38,11 @@ fun parseSyncedLyrics(data: String): Lyrics {
     )
 }
 
-fun parseRichSyncLyrics(data: String): Lyrics {
+fun parseRichSyncLyrics(
+    data: String,
+    plainLyric: String? = null,
+    syncedLyrics: String? = null,
+): Lyrics {
     // Unescape JSON string if needed (remove quotes and replace \n with actual newlines)
     val unescapedData =
         data
@@ -58,11 +62,6 @@ fun parseRichSyncLyrics(data: String): Lyrics {
             line.isNotBlank() && !line.trim().startsWith("[offset:")
         }
 
-    println("[parseRichSyncLyrics] Total lines: ${lines.size}, Filtered lines: ${lyricsLines.size}")
-    if (lyricsLines.isNotEmpty()) {
-        println("[parseRichSyncLyrics] First line sample: ${lyricsLines.first()}")
-    }
-
     // Regex to match [MM:SS.mm] format (flexible with 1-2 digits)
     val regex = Regex("\\[(\\d{1,2}):(\\d{2})\\.(\\d{2,3})\\](.+)")
     // Strip a leading voice marker (e.g. "v1:", "v2:") that some lyrics
@@ -71,6 +70,12 @@ fun parseRichSyncLyrics(data: String): Lyrics {
     val voiceMarkerRegex = Regex("""^v\d+:""")
     val linesLyrics = ArrayList<Lyrics.LyricsX.Line>()
 
+    // Prepare target words for syllable alignment if plain/synced text is available
+    val targetWords = extractTargetWords(plainLyric, syncedLyrics)
+    var targetIdx = 0
+
+    val timestampRegex = Regex("""<(\d{1,2}:\d{2}\.\d{2,3})>""")
+
     lyricsLines.forEachIndexed { index, line ->
         val matchResult = regex.matchEntire(line.trim())
         if (matchResult != null) {
@@ -78,13 +83,9 @@ fun parseRichSyncLyrics(data: String): Lyrics {
             val seconds = matchResult.groupValues[2].toLongOrNull() ?: 0L
             val centiseconds = matchResult.groupValues[3].toLongOrNull() ?: 0L
 
-            // Convert to milliseconds
-            // If centiseconds has 3 digits (milliseconds), use directly
-            // If 2 digits (centiseconds), multiply by 10
             val millisPart = if (matchResult.groupValues[3].length == 3) centiseconds else centiseconds * 10
             val timeInMillis = minutes * 60_000L + seconds * 1000L + millisPart
 
-            // Keep the rich sync content as-is (with <MM:SS.mm> word format)
             val content =
                 matchResult.groupValues[4]
                     .trimStart()
@@ -92,23 +93,44 @@ fun parseRichSyncLyrics(data: String): Lyrics {
                     .trimStart()
 
             if (content.isNotBlank()) {
-                linesLyrics.add(
-                    Lyrics.LyricsX.Line(
-                        endTimeMs = "0",
-                        startTimeMs = timeInMillis.toString(),
-                        syllables = listOf(),
-                        words = content,
-                    ),
-                )
-            }
-        } else {
-            if (index < 3) { // Only log first 3 failed matches to avoid spam
-                println("[parseRichSyncLyrics] Line $index failed to match: '${line.take(100)}'")
+                val timestamps = timestampRegex.findAll(content).toList()
+                val finalWords =
+                    if (timestamps.isNotEmpty()) {
+                        val tokens = mutableListOf<Pair<String, String>>()
+                        timestamps.forEachIndexed { i, match ->
+                            val t = match.groupValues[1]
+                            val startPos = match.range.last + 1
+                            val endPos = if (i < timestamps.size - 1) timestamps[i + 1].range.first else content.length
+                            val text = content.substring(startPos, endPos).trim()
+                            if (text.isNotEmpty()) {
+                                tokens.add(t to text)
+                            }
+                        }
+
+                        if (targetWords.isNotEmpty()) {
+                            val alignment = alignSyllablesWithTargetWords(tokens, targetWords, targetIdx)
+                            targetIdx = alignment.newTargetIdx
+                            alignment.formattedWords
+                        } else {
+                            mergeSyllablesHeuristically(tokens)
+                        }
+                    } else {
+                        content
+                    }
+
+                if (finalWords.isNotBlank()) {
+                    linesLyrics.add(
+                        Lyrics.LyricsX.Line(
+                            endTimeMs = "0",
+                            startTimeMs = timeInMillis.toString(),
+                            syllables = listOf(),
+                            words = finalWords,
+                        ),
+                    )
+                }
             }
         }
     }
-
-    println("[parseRichSyncLyrics] Parsed ${linesLyrics.size} lines successfully")
 
     return Lyrics(
         lyrics =
@@ -162,18 +184,20 @@ fun parseTtmlLyrics(data: String): Lyrics {
                 val spanBegin = parseTtmlTime(beginRegex.find(spanAttrs)!!.groupValues[1])
                 val rawContent = decodeHtmlEntities(spanMatch.groupValues[2].replace(Regex("<[^>]*>"), ""))
 
-                // Check gap before this span
+                // Check gap before this span (only horizontal whitespace or <br>; ignore XML indentation/newlines between tags)
                 val lastEndPos = if (i == 0) 0 else timedSpans[i - 1].range.last + 1
                 val gapBefore = innerContent.substring(lastEndPos, spanMatch.range.first)
-                val gapBeforeHasBreak = gapBefore.any { it.isWhitespace() } || gapBefore.contains("<br", ignoreCase = true)
+                val gapBeforeHasSpace = !gapBefore.contains('\n') && !gapBefore.contains('\r') && gapBefore.any { it == ' ' || it == '\t' }
+                val gapBeforeHasBreak = gapBefore.contains("<br", ignoreCase = true) || gapBeforeHasSpace
 
                 // Check gap after this span
                 val nextStartPos = if (i < timedSpans.lastIndex) timedSpans[i + 1].range.first else innerContent.length
                 val gapAfter = innerContent.substring(spanMatch.range.last + 1, nextStartPos)
-                val gapAfterHasBreak = gapAfter.any { it.isWhitespace() } || gapAfter.contains("<br", ignoreCase = true) || i == timedSpans.lastIndex
+                val gapAfterHasSpace = !gapAfter.contains('\n') && !gapAfter.contains('\r') && gapAfter.any { it == ' ' || it == '\t' }
+                val gapAfterHasBreak = gapAfter.contains("<br", ignoreCase = true) || gapAfterHasSpace || i == timedSpans.lastIndex
 
-                val spanHasLeadingSpace = rawContent.isNotEmpty() && rawContent.first().isWhitespace()
-                val spanHasTrailingSpace = rawContent.isNotEmpty() && rawContent.last().isWhitespace()
+                val spanHasLeadingSpace = rawContent.isNotEmpty() && (rawContent.first() == ' ' || rawContent.first() == '\t')
+                val spanHasTrailingSpace = rawContent.isNotEmpty() && (rawContent.last() == ' ' || rawContent.last() == '\t')
 
                 // If there is whitespace between words before this span, close previous word
                 if ((gapBeforeHasBreak || spanHasLeadingSpace) && currentWord.isNotEmpty() && currentWordStartMs != null) {
@@ -344,4 +368,142 @@ fun parseUnsyncedLyrics(data: String): Lyrics {
                 syncType = "UNSYNCED",
             ),
     )
+}
+
+private class AlignmentResult(
+    val formattedWords: String,
+    val newTargetIdx: Int,
+)
+
+private fun extractTargetWords(plainLyric: String?, syncedLyrics: String?): List<Pair<String, String>> {
+    val sourceText = when {
+        !plainLyric.isNullOrBlank() -> plainLyric
+        !syncedLyrics.isNullOrBlank() -> syncedLyrics.replace(Regex("""\[\d{1,2}:\d{2}\.\d{2,3}\]"""), " ")
+        else -> return emptyList()
+    }
+    return sourceText.split(Regex("""\s+""")).mapNotNull { raw ->
+        val clean = cleanWordForAlignment(raw)
+        if (clean.isNotEmpty()) raw to clean else null
+    }
+}
+
+internal fun cleanWordForAlignment(word: String): String =
+    word.filter { it.isLetterOrDigit() || it == '\'' }.lowercase()
+
+private fun alignSyllablesWithTargetWords(
+    tokens: List<Pair<String, String>>,
+    targetWords: List<Pair<String, String>>,
+    startTargetIdx: Int,
+): AlignmentResult {
+    var targetIdx = startTargetIdx
+    val rebuilt = StringBuilder()
+    var currT: String? = null
+    val currSyllables = StringBuilder()
+    val currClean = StringBuilder()
+
+    for ((t, txt) in tokens) {
+        if (currT == null) {
+            currT = t
+        }
+        currSyllables.append(txt)
+        currClean.append(cleanWordForAlignment(txt))
+
+        if (targetIdx < targetWords.size) {
+            val (_, targetCw) = targetWords[targetIdx]
+            val currCleanStr = currClean.toString()
+            if (currCleanStr == targetCw) {
+                rebuilt.append("<$currT>$currSyllables ")
+                currT = null
+                currSyllables.clear()
+                currClean.clear()
+                targetIdx++
+            } else if (!targetCw.startsWith(currCleanStr)) {
+                var foundAhead = false
+                for (ahead in 1..4) {
+                    if (targetIdx + ahead < targetWords.size) {
+                        val (_, nextCw) = targetWords[targetIdx + ahead]
+                        if (nextCw == currCleanStr || nextCw.startsWith(currCleanStr)) {
+                            targetIdx += ahead
+                            if (nextCw == currCleanStr) {
+                                rebuilt.append("<$currT>$currSyllables ")
+                                currT = null
+                                currSyllables.clear()
+                                currClean.clear()
+                                targetIdx++
+                            }
+                            foundAhead = true
+                            break
+                        }
+                    }
+                }
+                if (!foundAhead) {
+                    rebuilt.append("<$currT>$currSyllables ")
+                    currT = null
+                    currSyllables.clear()
+                    currClean.clear()
+                }
+            }
+        } else {
+            rebuilt.append("<$currT>$currSyllables ")
+            currT = null
+            currSyllables.clear()
+            currClean.clear()
+        }
+    }
+
+    if (currSyllables.isNotEmpty() && currT != null) {
+        rebuilt.append("<$currT>$currSyllables ")
+    }
+
+    return AlignmentResult(rebuilt.toString().trimEnd(), targetIdx)
+}
+
+private fun mergeSyllablesHeuristically(tokens: List<Pair<String, String>>): String {
+    if (tokens.isEmpty()) return ""
+    val merged = mutableListOf<Pair<String, String>>()
+    var i = 0
+    while (i < tokens.size) {
+        var (t, text) = tokens[i]
+        while (i + 1 < tokens.size) {
+            val (_, nextText) = tokens[i + 1]
+            if (shouldMergeAdjacentSyllables(text, nextText)) {
+                text += nextText
+                i++
+            } else {
+                break
+            }
+        }
+        merged.add(t to text)
+        i++
+    }
+    return merged.joinToString(" ") { "<${it.first}>${it.second}" }
+}
+
+internal fun shouldMergeAdjacentSyllables(curr: String, next: String): Boolean {
+    val cLow = cleanWordForAlignment(curr)
+    val nLow = cleanWordForAlignment(next)
+    if (cLow.isEmpty() || nLow.isEmpty()) return false
+
+    // 1. Hyphen
+    if (curr.endsWith("-")) return true
+
+    // 2. Single Latin letter that cannot be an English word
+    if (nLow.length == 1 && nLow[0] in 'a'..'z' && nLow !in setOf("a", "i", "o")) return true
+    if (cLow.length == 1 && cLow[0] in 'a'..'z' && cLow !in setOf("a", "i", "o")) return true
+
+    // 3. Known syllable prefixes that are not standalone words
+    if (cLow in setOf("brea", "camou", "wi", "lo", "fa", "pie", "pixe", "beau")) return true
+
+    // 4. Known syllable suffixes that are not standalone words
+    if (nLow in setOf("rea", "dy", "ce", "sh", "ve", "king", "flaged", "lete", "peat", "ture", "ted", "ces")) return true
+
+    // 5. 'al' + 'ready' / 'rea' / 'dy'
+    if (cLow == "a" && (nLow == "l" || nLow == "lready")) return true
+    if (cLow == "al" && (nLow == "rea" || nLow == "ready")) return true
+    if (cLow == "alrea" && nLow == "dy") return true
+
+    // 6. 'de' + 'lete', 're' + 'peat'
+    if ((cLow == "de" || cLow == "re") && (nLow == "lete" || nLow == "peat")) return true
+
+    return false
 }

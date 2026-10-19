@@ -145,7 +145,7 @@ class SimpMusicLyricsClient {
             val plainLyrics = lrclibObject.plainLyrics
             if (!syncedLyrics.isNullOrEmpty()) {
                 if (richSyncTagRegex.containsMatchIn(syncedLyrics)) {
-                    org.simpmusic.lyrics.parser.parseRichSyncLyrics(syncedLyrics)
+                    org.simpmusic.lyrics.parser.parseRichSyncLyrics(syncedLyrics, plainLyric = plainLyrics, syncedLyrics = syncedLyrics)
                 } else {
                     parseSyncedLyrics(syncedLyrics)
                 }

@@ -288,7 +288,7 @@ internal fun AlbumItem.toAlbumsResult(): AlbumsResult =
 internal fun LyricsResponse.toLyrics(): Lyrics? =
     (
         richSyncLyrics?.takeIf { it.isNotEmpty() }?.let {
-            parseRichSyncLyrics(it)
+            parseRichSyncLyrics(it, plainLyric = plainLyric, syncedLyrics = syncedLyrics)
         }
             ?: syncedLyrics?.let { if (it.isNotEmpty() && it.isNotBlank()) parseSyncedLyrics(it) else null }
             ?: (
