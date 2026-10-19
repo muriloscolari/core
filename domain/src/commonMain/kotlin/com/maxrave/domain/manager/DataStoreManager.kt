@@ -606,6 +606,14 @@ interface DataStoreManager {
 
     suspend fun setLastfmScrobbleEnabled(enabled: Boolean)
 
+    val lastfmCustomApiKey: Flow<String>
+
+    val lastfmCustomSecret: Flow<String>
+
+    suspend fun setLastfmCustomApiKey(key: String)
+
+    suspend fun setLastfmCustomSecret(secret: String)
+
     val localTrackingEnabled: Flow<String>
 
     suspend fun setLocalTrackingEnabled(enabled: Boolean)

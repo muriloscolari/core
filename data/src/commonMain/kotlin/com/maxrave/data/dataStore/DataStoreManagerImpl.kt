@@ -1756,6 +1756,32 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val lastfmCustomApiKey: Flow<String> =
+        settingsDataStore.data.map { preferences ->
+            preferences[LASTFM_CUSTOM_API_KEY] ?: ""
+        }
+
+    override val lastfmCustomSecret: Flow<String> =
+        settingsDataStore.data.map { preferences ->
+            preferences[LASTFM_CUSTOM_SECRET] ?: ""
+        }
+
+    override suspend fun setLastfmCustomApiKey(key: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[LASTFM_CUSTOM_API_KEY] = key.trim()
+            }
+        }
+    }
+
+    override suspend fun setLastfmCustomSecret(secret: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[LASTFM_CUSTOM_SECRET] = secret.trim()
+            }
+        }
+    }
+
     override val localTrackingEnabled: Flow<String> =
         settingsDataStore.data.map { preferences ->
             preferences[LOCAL_TRACKING_ENABLED] ?: FALSE
@@ -1958,6 +1984,8 @@ internal class DataStoreManagerImpl(
         val LASTFM_SESSION_KEY = stringPreferencesKey("lastfm_session_key")
         val LASTFM_USERNAME = stringPreferencesKey("lastfm_username")
         val LASTFM_SCROBBLE_ENABLED = stringPreferencesKey("lastfm_scrobble_enabled")
+        val LASTFM_CUSTOM_API_KEY = stringPreferencesKey("lastfm_custom_api_key")
+        val LASTFM_CUSTOM_SECRET = stringPreferencesKey("lastfm_custom_secret")
 
         val LOCAL_TRACKING_ENABLED = stringPreferencesKey("local_tracking_enabled")
 
