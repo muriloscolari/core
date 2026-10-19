@@ -14,8 +14,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import java.io.Closeable
 import java.io.File
@@ -328,17 +330,27 @@ class DiscordNativeIpcClient(
         val adjustedRemainingDuration = (remainingDuration / speed).toLong()
         val calculatedEndTime = currentTime + adjustedRemainingDuration
 
+        val startSeconds = calculatedStartTime / 1000
+        val endSeconds = if (durationMillis > 0) calculatedEndTime / 1000 else null
+
+        val buttons = mutableListOf<Pair<String, String>>()
+        if (!song.videoId.isNullOrBlank()) {
+            buttons.add("Listen on SimpMusic" to "https://simpmusic.org/app/watch?v=${song.videoId}")
+        }
+        buttons.add("Visit SimpMusic" to "https://github.com/maxrave-dev/SimpMusic")
+
         val payload =
             buildSetActivityJson(
                 pid = currentPid,
                 details = song.title,
                 state = song.artistName?.joinToString(", ") ?: "",
-                startTime = calculatedStartTime,
-                endTime = if (durationMillis > 0) calculatedEndTime else null,
+                startTime = startSeconds,
+                endTime = endSeconds,
                 largeImage = song.thumbnails ?: APP_ICON,
                 largeText = song.albumName ?: song.title,
-                smallImage = null,
-                smallText = null,
+                smallImage = APP_ICON,
+                smallText = song.artistName?.firstOrNull() ?: APP_NAME,
+                buttons = buttons,
             )
         lastActivityPayload = payload
         if (isConnected) {
@@ -353,6 +365,13 @@ class DiscordNativeIpcClient(
     ) {
         val artist = song.artistName?.joinToString(", ") ?: ""
         val stateText = if (artist.isNotBlank()) "$artist (Pausado)" else "Pausado"
+
+        val buttons = mutableListOf<Pair<String, String>>()
+        if (!song.videoId.isNullOrBlank()) {
+            buttons.add("Listen on SimpMusic" to "https://simpmusic.org/app/watch?v=${song.videoId}")
+        }
+        buttons.add("Visit SimpMusic" to "https://github.com/maxrave-dev/SimpMusic")
+
         val payload =
             buildSetActivityJson(
                 pid = currentPid,
@@ -364,6 +383,7 @@ class DiscordNativeIpcClient(
                 largeText = song.albumName ?: song.title,
                 smallImage = APP_ICON,
                 smallText = "Pausado",
+                buttons = buttons,
             )
         lastActivityPayload = payload
         if (isConnected) {
@@ -438,9 +458,11 @@ class DiscordNativeIpcClient(
         largeText: String?,
         smallImage: String?,
         smallText: String?,
+        buttons: List<Pair<String, String>> = emptyList(),
     ): String {
         val activity =
             buildJsonObject {
+                put("name", APP_NAME)
                 put("type", 2) // LISTENING
                 put("details", details)
                 if (state.isNotBlank()) put("state", state)
@@ -455,6 +477,16 @@ class DiscordNativeIpcClient(
                     if (!largeText.isNullOrBlank()) put("large_text", largeText)
                     if (!smallImage.isNullOrBlank()) put("small_image", smallImage)
                     if (!smallText.isNullOrBlank()) put("small_text", smallText)
+                }
+                if (buttons.isNotEmpty()) {
+                    putJsonArray("buttons") {
+                        for ((label, url) in buttons.take(2)) {
+                            addJsonObject {
+                                put("label", label)
+                                put("url", url)
+                            }
+                        }
+                    }
                 }
             }
         val root =
@@ -484,7 +516,8 @@ class DiscordNativeIpcClient(
 
     companion object {
         private const val TAG = "DiscordNativeIpcClient"
-        const val APPLICATION_ID = "1141390499257618573"
+        const val APPLICATION_ID = "1271273225120125040"
+        private const val APP_NAME = "SimpMusic"
         private const val APP_ICON =
             "https://fra.cloud.appwrite.io/v1/storage/buckets/683f1f620010ba0fa5b1/files/69007bc8001a28a7cea8/view?project=67ec0369002bd8a96885"
         private const val RECONNECT_INTERVAL_MS = 10_000L
