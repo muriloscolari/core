@@ -17,12 +17,16 @@ internal class UpdateRepositoryImpl(
             youTube
                 .checkForGithubReleaseUpdate()
                 .onSuccess { response ->
+                    val appImage = response.assets?.firstOrNull { it?.name?.endsWith(".AppImage") == true && it.name?.endsWith(".zsync") != true }
+                    val zsync = response.assets?.firstOrNull { it?.name?.endsWith(".AppImage.zsync") == true }
                     emit(
                         Resource.Success(
                             UpdateData(
                                 tagName = response.tagName ?: "",
                                 releaseTime = response.publishedAt ?: "",
                                 body = response.body ?: "",
+                                appImageUrl = appImage?.browserDownloadUrl,
+                                zsyncUrl = zsync?.browserDownloadUrl,
                             ),
                         ),
                     )
