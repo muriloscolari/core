@@ -19,6 +19,8 @@ internal class UpdateRepositoryImpl(
                 .onSuccess { response ->
                     val appImage = response.assets?.firstOrNull { it?.name?.endsWith(".AppImage") == true && it.name?.endsWith(".zsync") != true }
                     val zsync = response.assets?.firstOrNull { it?.name?.endsWith(".AppImage.zsync") == true }
+                    val msix = response.assets?.firstOrNull { it?.name?.endsWith(".msix") == true }
+                    val appInstaller = response.assets?.firstOrNull { it?.name?.endsWith(".appinstaller") == true }
                     emit(
                         Resource.Success(
                             UpdateData(
@@ -27,6 +29,8 @@ internal class UpdateRepositoryImpl(
                                 body = response.body ?: "",
                                 appImageUrl = appImage?.browserDownloadUrl,
                                 zsyncUrl = zsync?.browserDownloadUrl,
+                                msixUrl = msix?.browserDownloadUrl,
+                                appInstallerUrl = appInstaller?.browserDownloadUrl,
                             ),
                         ),
                     )

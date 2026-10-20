@@ -6,4 +6,6 @@ data class UpdateData(
     val body: String,
     val appImageUrl: String? = null,
     val zsyncUrl: String? = null,
+    val msixUrl: String? = null,
+    val appInstallerUrl: String? = null,
 )
