@@ -9,6 +9,7 @@ import androidx.car.app.model.GridItem
 import androidx.car.app.model.GridSection
 import androidx.car.app.model.ItemList
 import androidx.car.app.model.ListTemplate
+import androidx.car.app.model.Row
 import androidx.car.app.model.SectionedItemTemplate
 import androidx.car.app.model.Tab
 import androidx.car.app.model.TabContents
@@ -200,6 +201,45 @@ internal class LibraryTabCarScreen(
     }
 
     override fun onGetTemplate(): Template {
+        if (carContext.carAppApiLevel < 6) {
+            val listBuilder =
+                ListTemplate
+                    .Builder()
+                    .setTitle(carContext.getString(R.string.app_name))
+                    .setHeaderAction(Action.APP_ICON)
+                    .addAction(searchFab())
+                    .addAction(nowPlayingFab())
+            val itemList = ItemList.Builder()
+            TABS.forEach { tab ->
+                itemList.addItem(
+                    Row
+                        .Builder()
+                        .setTitle(carContext.getString(tab.titleRes))
+                        .setImage(
+                            CarIcon
+                                .Builder(IconCompat.createWithResource(carContext, tab.iconRes))
+                                .build(),
+                        ).setOnClickListener {
+                            activeTabId = tab.contentId
+                            if (tab.contentId == SimpleMediaSessionCallback.HOME) {
+                                loadHomeShelves()
+                            } else {
+                                loadTab(tab.contentId)
+                            }
+                            screenManager.push(
+                                MediaListCarScreen(
+                                    carContext,
+                                    browserProvider,
+                                    tab.contentId,
+                                    carContext.getString(tab.titleRes),
+                                ),
+                            )
+                        }.build(),
+                )
+            }
+            return listBuilder.setSingleList(itemList.build()).build()
+        }
+
         val templateBuilder =
             TabTemplate
                 .Builder(
@@ -246,16 +286,25 @@ internal class LibraryTabCarScreen(
             .build()
     }
 
-    /** Home: each classic shelf becomes a titled grid section. */
+    /** Home: each classic shelf becomes a titled grid section (API 8+) or list template (API < 8). */
     private fun buildHomeSections(): Template {
         val shelves = homeShelves
         if (shelves == null) {
-            return SectionedItemTemplate
-                .Builder()
-                .addAction(searchFab())
-                .addAction(nowPlayingFab())
-                .setLoading(true)
-                .build()
+            return if (carContext.carAppApiLevel >= 8) {
+                SectionedItemTemplate
+                    .Builder()
+                    .addAction(searchFab())
+                    .addAction(nowPlayingFab())
+                    .setLoading(true)
+                    .build()
+            } else {
+                ListTemplate
+                    .Builder()
+                    .addAction(searchFab())
+                    .addAction(nowPlayingFab())
+                    .setLoading(true)
+                    .build()
+            }
         }
         if (shelves.isEmpty()) {
             // SectionedItemTemplate has no empty-state; fall back to a plain list message
@@ -266,22 +315,57 @@ internal class LibraryTabCarScreen(
                 .setSingleList(ItemList.Builder().setNoItemsMessage("Nothing to show").build())
                 .build()
         }
-        val builder =
-            SectionedItemTemplate
-                .Builder()
-                .addAction(searchFab())
-                .addAction(nowPlayingFab())
-        shelves.forEach { (shelf, items) ->
-            val section =
-                GridSection
+        if (carContext.carAppApiLevel >= 8) {
+            val builder =
+                SectionedItemTemplate
                     .Builder()
-                    // Spotify-sized tiles; anything smaller renders as a dense mosaic
-                    .setItemSize(GridSection.ITEM_SIZE_EXTRA_LARGE)
-                    .setTitle(shelf.mediaMetadata.title?.toString().orEmpty().ifBlank { " " })
-            items.forEach { item -> section.addItem(buildGridItem(item)) }
-            builder.addSection(section.build())
+                    .addAction(searchFab())
+                    .addAction(nowPlayingFab())
+            shelves.forEach { (shelf, items) ->
+                val section =
+                    GridSection
+                        .Builder()
+                        // Spotify-sized tiles; anything smaller renders as a dense mosaic
+                        .setItemSize(GridSection.ITEM_SIZE_EXTRA_LARGE)
+                        .setTitle(shelf.mediaMetadata.title?.toString().orEmpty().ifBlank { " " })
+                items.forEach { item -> section.addItem(buildGridItem(item)) }
+                builder.addSection(section.build())
+            }
+            return builder.build()
+        } else {
+            // For Car API Level < 8 (API Level 6 & 7):
+            val listBuilder =
+                ListTemplate
+                    .Builder()
+                    .addAction(searchFab())
+                    .addAction(nowPlayingFab())
+            val itemListBuilder = ItemList.Builder()
+            val nowPlayingId = handler.nowPlaying.value?.mediaId
+            val limit = carContext.listContentLimit()
+            var count = 0
+
+            for ((shelf, items) in shelves) {
+                if (count >= limit) break
+                for (item in items) {
+                    if (count >= limit) break
+                    val browsable = item.mediaMetadata.isBrowsable == true
+                    val isPlaying = !browsable && item.mediaId.substringAfterLast('/') == nowPlayingId
+                    itemListBuilder.addItem(
+                        carContext.mediaRow(item, artwork[item.mediaId], isPlaying) {
+                            if (browsable) {
+                                val title = item.mediaMetadata.title?.toString().orEmpty().ifBlank { item.mediaId }
+                                screenManager.push(MediaListCarScreen(carContext, browserProvider, item.mediaId, title))
+                            } else {
+                                playViaBrowser(carContext, browserProvider(), item, TAG)
+                                screenManager.push(NowPlayingCarScreen(carContext))
+                            }
+                        },
+                    )
+                    count++
+                }
+            }
+            return listBuilder.setSingleList(itemListBuilder.build()).build()
         }
-        return builder.build()
     }
 
     private fun buildGridItem(item: MediaItem): GridItem {
