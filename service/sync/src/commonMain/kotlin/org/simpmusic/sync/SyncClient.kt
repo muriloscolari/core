@@ -5,6 +5,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.header
+import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -32,6 +33,25 @@ class SyncClient(
 
     suspend fun login(credentials: SyncCredentials): SyncSession =
         authenticate("/v1/auth/login", credentials)
+
+    suspend fun logout(token: String) {
+        val response = http.post("$baseUrl/v1/auth/logout") {
+            header("Authorization", "Bearer $token")
+        }
+        if (response.status != HttpStatusCode.NoContent) {
+            error("logout failed with HTTP ${response.status.value}: ${response.bodyAsText()}")
+        }
+    }
+
+    suspend fun devices(token: String): List<SyncDevice> {
+        val response = http.get("$baseUrl/v1/devices") {
+            header("Authorization", "Bearer $token")
+        }
+        if (response.status != HttpStatusCode.OK) {
+            error("device listing failed with HTTP ${response.status.value}: ${response.bodyAsText()}")
+        }
+        return response.body()
+    }
 
     suspend fun sync(token: String, request: SyncRequest): SyncResponse {
         val response = http.post("$baseUrl/v1/sync") {

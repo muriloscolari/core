@@ -13,6 +13,15 @@ data class SyncCredentials(
 data class SyncSession(
     val token: String,
     val expiresAt: String,
+    val deviceId: String,
+)
+
+@Serializable
+data class SyncDevice(
+    val id: String,
+    val deviceName: String,
+    val createdAt: String,
+    val lastSeenAt: String,
 )
 
 @Serializable
