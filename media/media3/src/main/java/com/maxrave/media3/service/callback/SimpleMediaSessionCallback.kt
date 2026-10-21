@@ -1004,7 +1004,7 @@ internal class SimpleMediaSessionCallback(
                 .setTitle(title)
                 .setSubtitle(subtitle)
                 .setArtist(subtitle)
-                .setArtworkUri(iconUri)
+                .setArtworkUri(iconUri ?: defaultBrowsableArtwork(mediaType))
                 .setIsPlayable(false)
                 .setIsBrowsable(true)
                 .setMediaType(mediaType)
@@ -1020,6 +1020,17 @@ internal class SimpleMediaSessionCallback(
                 .build(),
         ).build()
 
+    private fun defaultBrowsableArtwork(mediaType: Int): Uri {
+        val drawable =
+            when (mediaType) {
+                MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS,
+                MediaMetadata.MEDIA_TYPE_PLAYLIST -> R.drawable.baseline_playlist_add_24
+                MediaMetadata.MEDIA_TYPE_FOLDER_MIXED -> R.drawable.home_android_auto
+                else -> R.drawable.baseline_album_24
+            }
+        return drawableUri(drawable)
+    }
+
     private fun SongEntity.toMediaItem(path: String): MediaItem {
         val artist = this.artistName?.connectArtists()
         return MediaItem
@@ -1034,7 +1045,10 @@ internal class SimpleMediaSessionCallback(
                     .setAlbumTitle(this.albumName)
                     .setAlbumArtist(artist)
                     .setDurationMs(this.durationSeconds.takeIf { it > 0 }?.times(1000L))
-                    .setArtworkUri(this.thumbnails?.toUri())
+                    .setArtworkUri(
+                        this.thumbnails?.takeIf { it.isNotBlank() }?.toUri()
+                            ?: drawableUri(R.drawable.baseline_album_24),
+                    )
                     .setIsPlayable(true)
                     .setIsBrowsable(false)
                     .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
@@ -1061,7 +1075,9 @@ internal class SimpleMediaSessionCallback(
                         this.thumbnails
                             ?.lastOrNull()
                             ?.url
-                            ?.toUri(),
+                            ?.takeIf { it.isNotBlank() }
+                            ?.toUri()
+                            ?: drawableUri(R.drawable.baseline_album_24),
                     ).setIsPlayable(true)
                     .setIsBrowsable(false)
                     .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
