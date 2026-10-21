@@ -108,8 +108,7 @@ internal class SimpleMediaSessionCallback(
                 Player.Commands
                     .Builder()
                     .addAllCommands()
-                    // COMMAND_GET_TIMELINE stays enabled so Android Auto can show its native
-                    // queue button. DelegatingForwardingPlayer publishes the adapter's real queue.
+                    .remove(COMMAND_GET_TIMELINE)
                     .build(),
             ).build()
     }
