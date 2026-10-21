@@ -5,3 +5,6 @@ actual fun loadMediaService() {
 
 actual fun loadLoginSyncModule() {
 }
+
+actual fun loadSimpConnectModule() {
+}

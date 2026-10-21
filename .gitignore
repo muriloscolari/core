@@ -28,3 +28,7 @@ replay_pid*
 
 # OMC (oh-my-claudecode) local state
 /.omc/
+
+# Gradle build directories
+build/
+.gradle/

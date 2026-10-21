@@ -19,3 +19,17 @@ actual fun loadLoginSyncModule() {
         },
     )
 }
+
+actual fun loadSimpConnectModule() {
+    loadKoinModules(
+        module {
+            single<com.maxrave.domain.repository.SimpConnectRepository>(createdAtStart = true) {
+                com.maxrave.data.simpconnect.SimpConnectRepositoryImpl(
+                    mediaPlayerHandler = get(),
+                    dataStoreManager = get(),
+                    scope = get(org.koin.core.qualifier.named(com.maxrave.common.Config.SERVICE_SCOPE)),
+                ).also { it.start() }
+            }
+        },
+    )
+}

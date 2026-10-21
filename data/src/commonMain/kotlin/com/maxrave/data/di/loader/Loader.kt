@@ -23,9 +23,13 @@ fun loadAllModules(appIdentity: AppIdentity) {
     loadKoinModules(listenTogetherModule)
     loadMediaService()
     loadLoginSyncModule()
+    loadSimpConnectModule()
 }
 
 expect fun loadMediaService()
 
 /** Login sync is one-sided per platform: Desktop hosts, Android sends, iOS takes no part. */
 expect fun loadLoginSyncModule()
+
+/** SimpConnect local P2P Spotify Connect style device sync. */
+expect fun loadSimpConnectModule()

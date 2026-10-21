@@ -120,6 +120,8 @@ kotlin {
                 implementation(libs.room.ktx)
                 // Login sync: the phone sends sign-ins to the Desktop
                 implementation(projects.loginSync)
+                // SimpConnect: P2P Spotify Connect style local session sync
+                implementation(projects.simpConnect)
             }
         }
 
@@ -141,6 +143,8 @@ kotlin {
                 implementation(libs.jna.platform)
                 // Login sync: the Desktop receives sign-ins from the phone
                 implementation(projects.loginSync)
+                // SimpConnect: P2P Spotify Connect style local session sync
+                implementation(projects.simpConnect)
             }
         }
     }
