@@ -349,10 +349,10 @@ internal class SimpleMediaSessionCallback(
                                 isGrid = true,
                             ),
                             browsableMediaItem(
-                                SONG,
-                                context.getString(R.string.songs),
+                                DOWNLOADED,
+                                context.getString(R.string.downloaded),
                                 null,
-                                drawableUri(R.drawable.baseline_album_24),
+                                drawableUri(R.drawable.baseline_downloaded),
                                 MediaMetadata.MEDIA_TYPE_PLAYLIST,
                                 isGrid = true,
                             ),
@@ -365,19 +365,19 @@ internal class SimpleMediaSessionCallback(
                                 isGrid = true,
                             ),
                             browsableMediaItem(
-                                DOWNLOADED,
-                                context.getString(R.string.downloaded),
-                                null,
-                                drawableUri(R.drawable.baseline_downloaded),
-                                MediaMetadata.MEDIA_TYPE_PLAYLIST,
-                                isGrid = true,
-                            ),
-                            browsableMediaItem(
                                 PLAYLIST,
                                 context.getString(R.string.playlists),
                                 null,
                                 drawableUri(R.drawable.baseline_playlist_add_24),
                                 MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS,
+                                isGrid = true,
+                            ),
+                            browsableMediaItem(
+                                SONG,
+                                context.getString(R.string.songs),
+                                null,
+                                drawableUri(R.drawable.baseline_album_24),
+                                MediaMetadata.MEDIA_TYPE_PLAYLIST,
                                 isGrid = true,
                             ),
                         )
@@ -406,70 +406,9 @@ internal class SimpleMediaSessionCallback(
                             ?: emptyList()
                     }
 
-                    PLAYLIST -> {
-                        val playlistItems = mutableListOf<MediaItem>()
-                        val isLoggedIn = dataStoreManager.loggedIn.firstOrNull() == DataStoreManager.TRUE
-                        if (isLoggedIn) {
-                            playlistItems.add(
-                                browsableMediaItem(
-                                    "$PLAYLIST/LM",
-                                    context.getString(R.string.youtube_liked_music),
-                                    "YouTube Music",
-                                    "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-songs-delhi-1200.png".toUri(),
-                                    MediaMetadata.MEDIA_TYPE_PLAYLIST,
-                                    isGrid = true,
-                                ),
-                            )
-                            val ytPlaylists = playlistRepository.getLibraryPlaylist().firstOrNull()
-                            ytPlaylists
-                                ?.filter { it.browseId != "VLLM" && it.browseId != "LM" }
-                                ?.forEach { yt ->
-                                    playlistItems.add(
-                                        browsableMediaItem(
-                                            "$PLAYLIST/${yt.browseId}",
-                                            yt.title,
-                                            listOfNotNull(yt.author, yt.itemCount).joinToString(" • ").ifEmpty { null },
-                                            yt.thumbnails.lastOrNull()?.url?.toUri(),
-                                            MediaMetadata.MEDIA_TYPE_PLAYLIST,
-                                            isGrid = true,
-                                        ),
-                                    )
-                                }
-                        }
+                    PLAYLIST -> buildPlaylistItems()
 
-                        val likedPlaylists = playlistRepository.getLikedPlaylists().firstOrNull() ?: emptyList()
-                        likedPlaylists.forEach { lp ->
-                            // Avoid adding duplicates if already present from YouTube library
-                            if (playlistItems.none { it.mediaId == "$PLAYLIST/${lp.id}" }) {
-                                playlistItems.add(
-                                    browsableMediaItem(
-                                        "$PLAYLIST/${lp.id}",
-                                        lp.title,
-                                        lp.author,
-                                        lp.thumbnails?.toUri(),
-                                        MediaMetadata.MEDIA_TYPE_PLAYLIST,
-                                        isGrid = true,
-                                    ),
-                                )
-                            }
-                        }
-
-                        val localPlaylists = localPlaylistRepository.getAllLocalPlaylists().firstOrNull() ?: emptyList()
-                        localPlaylists.sortedBy { it.inLibrary }.forEach { local ->
-                            playlistItems.add(
-                                browsableMediaItem(
-                                    "$PLAYLIST/local_${local.id}",
-                                    local.title,
-                                    "${local.tracks?.size ?: 0} ${context.getString(R.string.track)}",
-                                    local.thumbnail?.toUri(),
-                                    MediaMetadata.MEDIA_TYPE_PLAYLIST,
-                                    isGrid = true,
-                                ),
-                            )
-                        }
-
-                        playlistItems
-                    }
+                    HOME_PLAYLISTS -> buildPlaylistItems()
 
                     HOME -> {
                         val temp =
@@ -496,16 +435,21 @@ internal class SimpleMediaSessionCallback(
                                     }
                             }
                         }
-                        listHomeItem.map {
-                            browsableMediaItem(
-                                "$HOME/${it.title}",
-                                it.title,
-                                it.subtitle,
-                                it.thumbnail?.lastOrNull()?.url?.toUri(),
-                                MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
-                                isGrid = true,
-                            )
-                        }
+                        val shelves =
+                            listHomeItem
+                                .map {
+                                    browsableMediaItem(
+                                        "$HOME/${it.title}",
+                                        it.title,
+                                        it.subtitle,
+                                        it.thumbnail?.lastOrNull()?.url?.toUri()
+                                            ?: it.contents.firstOrNull()?.thumbnails?.lastOrNull()?.url?.toUri(),
+                                        MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
+                                        isGrid = true,
+                                    )
+                                }.toMutableList()
+                        buildHomePlaylistsShelf()?.let { shelves.add(0, it) }
+                        shelves
                     }
 
                     else -> {
@@ -943,6 +887,97 @@ internal class SimpleMediaSessionCallback(
             }
         }
 
+    private suspend fun buildPlaylistItems(): List<MediaItem> {
+        val playlistItems = mutableListOf<MediaItem>()
+        val isLoggedIn = dataStoreManager.loggedIn.firstOrNull() == DataStoreManager.TRUE
+        if (isLoggedIn) {
+            playlistItems.add(
+                browsableMediaItem(
+                    "$PLAYLIST/LM",
+                    context.getString(R.string.youtube_liked_music),
+                    "YouTube Music",
+                    LIKED_MUSIC_ARTWORK.toUri(),
+                    MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                    isGrid = true,
+                ),
+            )
+            val ytPlaylists = playlistRepository.getLibraryPlaylist().firstOrNull()
+            ytPlaylists
+                ?.filter { it.browseId != "VLLM" && it.browseId != "LM" }
+                ?.forEach { yt ->
+                    playlistItems.add(
+                        browsableMediaItem(
+                            "$PLAYLIST/${yt.browseId}",
+                            yt.title,
+                            listOfNotNull(yt.author, yt.itemCount).joinToString(" • ").ifEmpty { null },
+                            yt.thumbnails.lastOrNull()?.url?.toUri(),
+                            MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                            isGrid = true,
+                        ),
+                    )
+                }
+        }
+
+        val likedPlaylists = playlistRepository.getLikedPlaylists().firstOrNull() ?: emptyList()
+        likedPlaylists.forEach { lp ->
+            // Avoid adding duplicates if already present from YouTube library
+            if (playlistItems.none { it.mediaId == "$PLAYLIST/${lp.id}" }) {
+                playlistItems.add(
+                    browsableMediaItem(
+                        "$PLAYLIST/${lp.id}",
+                        lp.title,
+                        lp.author,
+                        lp.thumbnails.takeIf { it.isNotBlank() }?.toUri(),
+                        MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                        isGrid = true,
+                    ),
+                )
+            }
+        }
+
+        val localPlaylists = localPlaylistRepository.getAllLocalPlaylists().firstOrNull() ?: emptyList()
+        localPlaylists.sortedBy { it.inLibrary }.forEach { local ->
+            val trackCount = local.tracks?.size ?: 0
+            playlistItems.add(
+                browsableMediaItem(
+                    "$PLAYLIST/local_${local.id}",
+                    local.title,
+                    context.resources.getQuantityString(R.plurals.n_song, trackCount, trackCount),
+                    local.thumbnail?.takeIf { it.isNotBlank() }?.toUri(),
+                    MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                    isGrid = true,
+                ),
+            )
+        }
+
+        return playlistItems
+    }
+
+    /**
+     * Home row mirroring the templated app's "Your playlists" section. It only
+     * reads the local cache so opening Home never waits on the YouTube library;
+     * the Playlists screen does the network refresh when the row is opened.
+     */
+    private suspend fun buildHomePlaylistsShelf(): MediaItem? {
+        val isLoggedIn = dataStoreManager.loggedIn.firstOrNull() == DataStoreManager.TRUE
+        val likedPlaylists = playlistRepository.getLikedPlaylists().firstOrNull().orEmpty()
+        val localPlaylists = localPlaylistRepository.getAllLocalPlaylists().firstOrNull().orEmpty()
+        if (!isLoggedIn && likedPlaylists.isEmpty() && localPlaylists.isEmpty()) return null
+
+        val artworkUri =
+            localPlaylists.firstOrNull()?.thumbnail?.takeIf { it.isNotBlank() }?.toUri()
+                ?: likedPlaylists.firstOrNull()?.thumbnails?.takeIf { it.isNotBlank() }?.toUri()
+                ?: if (isLoggedIn) LIKED_MUSIC_ARTWORK.toUri() else null
+        return browsableMediaItem(
+            HOME_PLAYLISTS,
+            context.getString(R.string.playlists),
+            context.getString(R.string.library),
+            artworkUri,
+            MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS,
+            isGrid = true,
+        )
+    }
+
     private fun drawableUri(
         @DrawableRes id: Int,
     ) = Uri
@@ -985,33 +1020,43 @@ internal class SimpleMediaSessionCallback(
                 .build(),
         ).build()
 
-    private fun SongEntity.toMediaItem(path: String) =
-        MediaItem
+    private fun SongEntity.toMediaItem(path: String): MediaItem {
+        val artist = this.artistName?.connectArtists()
+        return MediaItem
             .Builder()
             .setMediaId("$path/${this.videoId}")
             .setMediaMetadata(
                 MediaMetadata
                     .Builder()
                     .setTitle(this.title)
-                    .setSubtitle(this.artistName?.joinToString(", "))
-                    .setArtist(this.artistName?.joinToString(" "))
+                    .setSubtitle(artist)
+                    .setArtist(artist)
+                    .setAlbumTitle(this.albumName)
+                    .setAlbumArtist(artist)
+                    .setDurationMs(this.durationSeconds.takeIf { it > 0 }?.times(1000L))
                     .setArtworkUri(this.thumbnails?.toUri())
                     .setIsPlayable(true)
                     .setIsBrowsable(false)
                     .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
                     .build(),
             ).build()
+    }
 
-    private fun Track.toMediaItemWithoutPath(path: String? = SONG) =
-        MediaItem
+    private fun Track.toMediaItemWithoutPath(path: String? = SONG): MediaItem {
+        val artist = this.artists?.toListName()?.connectArtists()
+        return MediaItem
             .Builder()
             .setMediaId(if (path == null) this.videoId else "$path/${this.videoId}")
             .setMediaMetadata(
                 MediaMetadata
                     .Builder()
                     .setTitle(this.title)
-                    .setSubtitle(this.artists?.toListName()?.connectArtists())
-                    .setArtist(this.artists?.toListName()?.connectArtists())
+                    .setSubtitle(artist)
+                    .setArtist(artist)
+                    .setAlbumTitle(this.album?.name)
+                    .setAlbumArtist(artist)
+                    .setDurationMs(this.durationSeconds?.takeIf { it > 0 }?.times(1000L))
+                    .setReleaseYear(this.year?.toIntOrNull())
                     .setArtworkUri(
                         this.thumbnails
                             ?.lastOrNull()
@@ -1022,11 +1067,13 @@ internal class SimpleMediaSessionCallback(
                     .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
                     .build(),
             ).build()
+    }
 
     companion object {
         const val ROOT = "root"
         const val SONG = "song"
         const val HOME = "home"
+        const val HOME_PLAYLISTS = HOME + "/__playlists__"
         const val ONLINE_PLAYLIST = "online_playlist"
         const val PLAYLIST = "playlist"
         const val FAVORITE = "favorite"
@@ -1037,5 +1084,7 @@ internal class SimpleMediaSessionCallback(
         const val CONTENT_STYLE_PLAYABLE_HINT = "android.media.browse.CONTENT_STYLE_PLAYABLE_HINT"
         const val CONTENT_STYLE_LIST_ITEM_HINT_VALUE = 1
         const val CONTENT_STYLE_GRID_ITEM_HINT_VALUE = 2
+        private const val LIKED_MUSIC_ARTWORK =
+            "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-songs-delhi-1200.png"
     }
 }
