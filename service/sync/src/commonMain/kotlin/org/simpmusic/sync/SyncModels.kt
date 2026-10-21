@@ -7,6 +7,15 @@ data class SyncCredentials(
     val email: String,
     val authProof: String,
     val deviceName: String,
+    val recoveryKeyHash: String? = null,
+)
+
+@Serializable
+data class SyncRecoveryRequest(
+    val email: String,
+    val recoveryKeyHash: String,
+    val newAuthProof: String,
+    val deviceName: String,
 )
 
 @Serializable

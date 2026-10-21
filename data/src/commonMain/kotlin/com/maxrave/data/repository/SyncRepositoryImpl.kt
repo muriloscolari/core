@@ -12,6 +12,7 @@ import kotlinx.serialization.json.Json
 import org.simpmusic.sync.SyncClient
 import org.simpmusic.sync.SyncCredentials
 import org.simpmusic.sync.SyncSession
+import org.simpmusic.sync.SyncRecoveryRequest
 
 class SyncRepositoryImpl(
     private val dataStore: DataStoreManager,
@@ -32,6 +33,15 @@ class SyncRepositoryImpl(
 
     override suspend fun login(email: String, authProof: String, deviceName: String) {
         authenticate(email, authProof, deviceName, register = false)
+    }
+
+    override suspend fun recover(email: String, recoveryKeyHash: String, newAuthProof: String, deviceName: String) {
+        val url = dataStore.syncServerUrl.first().trimEnd('/')
+        require(url.isNotBlank()) { "Sync server URL is required" }
+        val session = SyncClient(url).recover(SyncRecoveryRequest(email.trim(), recoveryKeyHash, newAuthProof, deviceName.trim()))
+        dataStore.setSyncSession(json.encodeToString(session))
+        dataStore.setSyncEnabled(true)
+        _status.value = SyncStatus(enabled = true, configured = true)
     }
 
     override suspend fun logout() {

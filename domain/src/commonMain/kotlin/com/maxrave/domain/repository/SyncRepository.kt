@@ -18,6 +18,8 @@ interface SyncRepository {
 
     suspend fun login(email: String, authProof: String, deviceName: String)
 
+    suspend fun recover(email: String, recoveryKeyHash: String, newAuthProof: String, deviceName: String)
+
     suspend fun logout()
 
     suspend fun synchronize()

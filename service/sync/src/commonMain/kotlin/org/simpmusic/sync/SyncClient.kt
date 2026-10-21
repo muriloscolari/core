@@ -40,6 +40,9 @@ class SyncClient(
     suspend fun login(credentials: SyncCredentials): SyncSession =
         authenticate("/v1/auth/login", credentials)
 
+    suspend fun recover(request: SyncRecoveryRequest): SyncSession =
+        authenticate("/v1/auth/recover", request)
+
     suspend fun logout(token: String) {
         val response = http.post("$baseUrl/v1/auth/logout") {
             header("Authorization", "Bearer $token")
@@ -91,7 +94,7 @@ class SyncClient(
         return response.body()
     }
 
-    private suspend fun authenticate(path: String, credentials: SyncCredentials): SyncSession {
+    private suspend fun authenticate(path: String, credentials: Any): SyncSession {
         val response = http.post("$baseUrl$path") {
             contentType(ContentType.Application.Json)
             setBody(credentials)
