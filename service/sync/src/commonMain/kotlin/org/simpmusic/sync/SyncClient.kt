@@ -1,0 +1,58 @@
+package org.simpmusic.sync
+
+import com.maxrave.ktorext.getEngine
+import io.ktor.client.HttpClient
+import io.ktor.client.call.body
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.serialization.kotlinx.json.json
+import kotlinx.serialization.json.Json
+
+class SyncClient(
+    private val baseUrl: String,
+) {
+    private val json = Json { ignoreUnknownKeys = true }
+    private val http = HttpClient(getEngine()) {
+        install(ContentNegotiation) { json(json) }
+        install(HttpTimeout) {
+            connectTimeoutMillis = 10_000
+            requestTimeoutMillis = 30_000
+        }
+    }
+
+    suspend fun register(credentials: SyncCredentials): SyncSession =
+        authenticate("/v1/auth/register", credentials)
+
+    suspend fun login(credentials: SyncCredentials): SyncSession =
+        authenticate("/v1/auth/login", credentials)
+
+    suspend fun sync(token: String, request: SyncRequest): SyncResponse {
+        val response = http.post("$baseUrl/v1/sync") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $token")
+            setBody(request)
+        }
+        if (response.status != HttpStatusCode.OK) {
+            error("sync failed with HTTP ${response.status.value}: ${response.bodyAsText()}")
+        }
+        return response.body()
+    }
+
+    private suspend fun authenticate(path: String, credentials: SyncCredentials): SyncSession {
+        val response = http.post("$baseUrl$path") {
+            contentType(ContentType.Application.Json)
+            setBody(credentials)
+        }
+        if (response.status != HttpStatusCode.OK) {
+            error("authentication failed with HTTP ${response.status.value}: ${response.bodyAsText()}")
+        }
+        return response.body()
+    }
+}
