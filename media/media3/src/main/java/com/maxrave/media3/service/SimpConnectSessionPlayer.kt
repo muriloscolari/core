@@ -1,11 +1,13 @@
 package com.maxrave.media3.service
 
 import android.net.Uri
+import androidx.media3.common.AdPlaybackState
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import com.maxrave.domain.data.model.simpconnect.RemotePlaybackStateDomain
 import com.maxrave.domain.repository.SimpConnectRepository
@@ -13,6 +15,66 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.util.concurrent.CopyOnWriteArrayList
+
+/**
+ * A read-only single-item [Timeline] published to MediaSession while SimpConnect mirrors a remote device.
+ * SystemUI and Xiaomi HyperOS dynamic island require a valid single-window timeline with matching
+ * media item and duration to show playback notifications and Island animations.
+ */
+@UnstableApi
+private class SingleMediaItemTimeline(
+    private val item: MediaItem,
+    private val durationUs: Long,
+) : Timeline() {
+    override fun getWindowCount(): Int = 1
+
+    override fun getWindow(
+        windowIndex: Int,
+        window: Window,
+        defaultPositionProjectionUs: Long,
+    ): Window {
+        window.set(
+            /* uid= */ item.mediaId,
+            /* mediaItem= */ item,
+            /* manifest= */ null,
+            /* presentationStartTimeMs= */ C.TIME_UNSET,
+            /* windowStartTimeMs= */ C.TIME_UNSET,
+            /* elapsedRealtimeEpochOffsetMs= */ C.TIME_UNSET,
+            /* isSeekable= */ true,
+            /* isDynamic= */ false,
+            /* liveConfiguration= */ null,
+            /* defaultPositionUs= */ 0,
+            /* durationUs= */ if (durationUs > 0) durationUs else C.TIME_UNSET,
+            /* firstPeriodIndex= */ 0,
+            /* lastPeriodIndex= */ 0,
+            /* positionInFirstPeriodUs= */ 0,
+        )
+        return window
+    }
+
+    override fun getPeriodCount(): Int = 1
+
+    override fun getPeriod(
+        periodIndex: Int,
+        period: Period,
+        setIds: Boolean,
+    ): Period {
+        period.set(
+            /* id= */ if (setIds) item.mediaId else null,
+            /* uid= */ if (setIds) item.mediaId else null,
+            /* windowIndex= */ 0,
+            /* durationUs= */ if (durationUs > 0) durationUs else C.TIME_UNSET,
+            /* positionInWindowUs= */ 0,
+            /* adPlaybackState= */ AdPlaybackState.NONE,
+            /* isPlaceholder= */ false,
+        )
+        return period
+    }
+
+    override fun getIndexOfPeriod(uid: Any): Int = if (uid == item.mediaId) 0 else C.INDEX_UNSET
+
+    override fun getUidOfPeriod(periodIndex: Int): Any = item.mediaId
+}
 
 /**
  * A [Player] wrapper used **only by the MediaSession** so the system notification, Bluetooth
@@ -79,6 +141,15 @@ internal class SimpConnectSessionPlayer(
         val active = remoteDeviceActive
         val track = state?.track
 
+        val activeChanged = lastRemoteActive != active
+        lastRemoteActive = active
+
+        // When remote is not active and was not active, delegate handles all its own events directly.
+        // Intercepting or synthesizing events during normal local playback breaks HyperOS Dynamic Island.
+        if (!active && !activeChanged) {
+            return
+        }
+
         // On disconnect restore the local notification with the delegate's own item/state rather
         // than clearing it: the local player may not emit anything until the next user action.
         val mediaItem = if (active) remoteMediaItem() else delegate.currentMediaItem
@@ -86,17 +157,17 @@ internal class SimpConnectSessionPlayer(
         val isPlaying = if (active) state?.isPlaying == true else delegate.isPlaying
         val repeatMode = if (active) remoteRepeatMode() else delegate.repeatMode
         val shuffle = if (active) state?.isShuffle == true else delegate.shuffleModeEnabled
-
-        val activeChanged = lastRemoteActive != active
-        lastRemoteActive = active
+        val timeline = currentTimeline
 
         listeners.forEach { listener ->
             try {
                 if (activeChanged) {
                     listener.onAvailableCommandsChanged(availableCommands)
+                    listener.onTimelineChanged(timeline, Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED)
                 }
                 if (lastVideoId != track?.videoId) {
                     lastVideoId = track?.videoId
+                    listener.onTimelineChanged(timeline, Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED)
                     listener.onMediaItemTransition(
                         mediaItem,
                         Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
@@ -192,6 +263,20 @@ internal class SimpConnectSessionPlayer(
 
     override fun getCurrentMediaItem(): MediaItem? = if (isRemoteActive()) remoteMediaItem() else super.currentMediaItem
 
+    override fun getCurrentTimeline(): Timeline =
+        if (isRemoteActive()) {
+            val item = remoteMediaItem()
+            if (item != null) {
+                val dur = remoteDurationMs()
+                val durUs = if (dur != C.TIME_UNSET && dur > 0) dur * 1000L else C.TIME_UNSET
+                SingleMediaItemTimeline(item, durUs)
+            } else {
+                Timeline.EMPTY
+            }
+        } else {
+            super.currentTimeline
+        }
+
     override fun getMediaMetadata(): MediaMetadata =
         if (isRemoteActive()) remoteMediaItem()?.mediaMetadata ?: MediaMetadata.EMPTY else super.mediaMetadata
 
@@ -244,6 +329,14 @@ internal class SimpConnectSessionPlayer(
 
     // ========== Transport routed to the remote target ==========
 
+    override fun prepare() {
+        if (isRemoteActive()) {
+            // No-op for local delegate: remote playback is handled by the controlled target.
+        } else {
+            super.prepare()
+        }
+    }
+
     override fun play() {
         if (isRemoteActive()) repository.sendPlay() else super.play()
     }
@@ -269,6 +362,14 @@ internal class SimpConnectSessionPlayer(
             repository.sendSeekTo(positionMs.coerceAtLeast(0L))
         } else {
             super.seekTo(positionMs)
+        }
+    }
+
+    override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
+        if (isRemoteActive()) {
+            repository.sendSeekTo(positionMs.coerceAtLeast(0L))
+        } else {
+            super.seekTo(mediaItemIndex, positionMs)
         }
     }
 

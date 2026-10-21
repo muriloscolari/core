@@ -187,9 +187,7 @@ class SimpConnectRepositoryImpl(
                     ConnectionStatus.CONNECTED -> {
                         _activeRemoteDevice.value = _pendingDevice.value
                         _pendingDevice.value = null
-                        if (mediaPlayerHandler.controlState.value.isPlaying) {
-                            scope.launch { mediaPlayerHandler.onPlayerEvent(PlayerEvent.PlayPause) }
-                        }
+                        suspendLocalPlayer()
                     }
                     ConnectionStatus.CONNECTING, ConnectionStatus.WAITING_FOR_APPROVAL -> Unit
                     ConnectionStatus.IDLE,
@@ -199,6 +197,7 @@ class SimpConnectRepositoryImpl(
                     -> {
                         _activeRemoteDevice.value = null
                         _pendingDevice.value = null
+                        resumeLocalPlayer()
                     }
                 }
             }
@@ -232,6 +231,41 @@ class SimpConnectRepositoryImpl(
                     broadcastCurrentState()
                 }
             }
+        }
+    }
+
+    /**
+     * True while the local player was stopped because this device became a controller.
+     * Pausing was not enough: a paused player keeps buffering and retrying chunk loads, and every
+     * retry went through the stream resolver, flooding the log with "Stream: No URL found" and
+     * starving the controller's CPU/network while it should only be mirroring the target.
+     */
+    @Volatile
+    private var localPlayerSuspended = false
+
+    private fun suspendLocalPlayer() {
+        if (localPlayerSuspended) return
+        localPlayerSuspended = true
+        scope.launch {
+            runCatching {
+                val player = mediaPlayerHandler.player
+                player.playWhenReady = false
+                player.stop()
+                player.clearMediaItems()
+            }.onFailure { Logger.w(TAG, "Failed to suspend local player: ${it.message}") }
+        }
+    }
+
+    private fun resumeLocalPlayer() {
+        if (!localPlayerSuspended) return
+        localPlayerSuspended = false
+        scope.launch {
+            runCatching {
+                val player = mediaPlayerHandler.player
+                // Re-arm the local queue at its old position, paused: coming back must not blast audio.
+                player.playWhenReady = false
+                mediaPlayerHandler.mayBeRestoreQueue()
+            }.onFailure { Logger.w(TAG, "Failed to resume local player: ${it.message}") }
         }
     }
 
