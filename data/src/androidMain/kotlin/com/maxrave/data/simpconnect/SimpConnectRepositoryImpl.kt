@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.simpmusic.simpconnect.AuthRequest
@@ -184,6 +185,16 @@ class SimpConnectRepositoryImpl(
         }
         scope.launch {
             mediaPlayerHandler.queueData.collect { broadcastCurrentState() }
+        }
+
+        // Periodic ticker to sync playback position to connected controllers while playing
+        scope.launch {
+            while (isActive) {
+                kotlinx.coroutines.delay(500)
+                if (server.connectedControllersCount.value > 0 && mediaPlayerHandler.controlState.value.isPlaying) {
+                    broadcastCurrentState()
+                }
+            }
         }
     }
 
@@ -387,6 +398,7 @@ class SimpConnectRepositoryImpl(
             repeatMode = repeatModeInt,
             queue = queue.map { it.toTrackSummary() },
             queueIndex = currentIndex,
+            timestampMs = System.currentTimeMillis(),
         )
     }
 
@@ -456,6 +468,7 @@ class SimpConnectRepositoryImpl(
             repeatMode = repeatMode,
             queue = queue.map { it.toDomain() },
             queueIndex = queueIndex,
+            lastSyncTimestamp = lastSyncTimestamp,
         )
     }
 

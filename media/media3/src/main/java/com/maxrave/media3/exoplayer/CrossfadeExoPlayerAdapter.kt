@@ -467,16 +467,6 @@ internal class CrossfadeExoPlayerAdapter(
                 override fun setPlayWhenReady(playWhenReady: Boolean) {
                     this@CrossfadeExoPlayerAdapter.playWhenReady = playWhenReady
                 }
-
-                override fun currentQueueIndex(): Int =
-                    this@CrossfadeExoPlayerAdapter.currentQueueIndex()
-
-                override fun seekToQueueIndex(
-                    index: Int,
-                    positionMs: Long,
-                ) {
-                    this@CrossfadeExoPlayerAdapter.seekToQueueIndex(index, positionMs)
-                }
             }
     }
 
@@ -1221,28 +1211,6 @@ internal class CrossfadeExoPlayerAdapter(
         } else {
             playlist.toList()
         }
-
-    /** Position of the current track in [getCurrentMediaTimeLine], which is the queue order. */
-    private fun currentQueueIndex(): Int =
-        if (internalShuffleModeEnabled) {
-            shuffleIndices.getOrNull(localCurrentMediaItemIndex) ?: -1
-        } else {
-            localCurrentMediaItemIndex
-        }
-
-    /** Maps a MediaSession queue index back to the adapter's playlist index. */
-    private fun seekToQueueIndex(
-        index: Int,
-        positionMs: Long,
-    ) {
-        val playlistIndex =
-            if (internalShuffleModeEnabled) {
-                shuffleOrder.getOrNull(index) ?: return
-            } else {
-                index
-            }
-        seekTo(playlistIndex, positionMs)
-    }
 
     override fun getUnshuffledIndex(shuffledIndex: Int): Int =
         if (internalShuffleModeEnabled) {
@@ -3375,9 +3343,6 @@ internal class CrossfadeExoPlayerAdapter(
 
     private fun notifyTimelineChanged(reason: String) {
         val list = getShuffledMediaItemList()
-        // Keep the queue published to MediaSession in sync with the adapter's real playlist.
-        // Android Auto uses this timeline for its native queue button.
-        forwardingPlayer.setQueueItems(list.map { it.toMedia3MediaItem() })
         listeners.forEach { it.onTimelineChanged(list, reason) }
     }
 }

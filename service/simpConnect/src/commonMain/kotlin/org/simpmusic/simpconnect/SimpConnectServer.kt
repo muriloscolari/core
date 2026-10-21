@@ -238,16 +238,56 @@ class SimpConnectServer(
                     }.getOrNull() ?: continue
 
                     when (msg) {
-                        is SimpConnectMessage.PlayPause -> listener.onPlayPause()
-                        is SimpConnectMessage.Play -> listener.onPlay()
-                        is SimpConnectMessage.Pause -> listener.onPause()
-                        is SimpConnectMessage.Next -> listener.onNext()
-                        is SimpConnectMessage.Previous -> listener.onPrevious()
-                        is SimpConnectMessage.SeekTo -> listener.onSeekTo(msg.positionMs)
-                        is SimpConnectMessage.SetVolume -> listener.onSetVolume(msg.volume)
-                        is SimpConnectMessage.SetShuffle -> listener.onSetShuffle(msg.enabled)
-                        is SimpConnectMessage.SetRepeat -> listener.onSetRepeat(msg.mode)
-                        is SimpConnectMessage.PlayTrack -> listener.onPlayTrack(msg)
+                        is SimpConnectMessage.PlayPause -> {
+                            listener.onPlayPause()
+                            kotlinx.coroutines.delay(50)
+                            broadcastStateSync(listener.getCurrentState())
+                        }
+                        is SimpConnectMessage.Play -> {
+                            listener.onPlay()
+                            kotlinx.coroutines.delay(50)
+                            broadcastStateSync(listener.getCurrentState())
+                        }
+                        is SimpConnectMessage.Pause -> {
+                            listener.onPause()
+                            kotlinx.coroutines.delay(50)
+                            broadcastStateSync(listener.getCurrentState())
+                        }
+                        is SimpConnectMessage.Next -> {
+                            listener.onNext()
+                            kotlinx.coroutines.delay(50)
+                            broadcastStateSync(listener.getCurrentState())
+                        }
+                        is SimpConnectMessage.Previous -> {
+                            listener.onPrevious()
+                            kotlinx.coroutines.delay(50)
+                            broadcastStateSync(listener.getCurrentState())
+                        }
+                        is SimpConnectMessage.SeekTo -> {
+                            listener.onSeekTo(msg.positionMs)
+                            kotlinx.coroutines.delay(50)
+                            broadcastStateSync(listener.getCurrentState())
+                        }
+                        is SimpConnectMessage.SetVolume -> {
+                            listener.onSetVolume(msg.volume)
+                            kotlinx.coroutines.delay(50)
+                            broadcastStateSync(listener.getCurrentState())
+                        }
+                        is SimpConnectMessage.SetShuffle -> {
+                            listener.onSetShuffle(msg.enabled)
+                            kotlinx.coroutines.delay(50)
+                            broadcastStateSync(listener.getCurrentState())
+                        }
+                        is SimpConnectMessage.SetRepeat -> {
+                            listener.onSetRepeat(msg.mode)
+                            kotlinx.coroutines.delay(50)
+                            broadcastStateSync(listener.getCurrentState())
+                        }
+                        is SimpConnectMessage.PlayTrack -> {
+                            listener.onPlayTrack(msg)
+                            kotlinx.coroutines.delay(100)
+                            broadcastStateSync(listener.getCurrentState())
+                        }
                         is SimpConnectMessage.HandoffRequest -> {
                             val payload = listener.getHandoffPayload()
                             session.send(Frame.Text(simpConnectJson.encodeToString(SimpConnectMessage.serializer(), payload)))

@@ -29,6 +29,7 @@ data class RemotePlaybackStateDomain(
     val repeatMode: Int,
     val queue: List<TrackSummaryDomain> = emptyList(),
     val queueIndex: Int = 0,
+    val lastSyncTimestamp: Long = 0L,
 )
 
 enum class SimpConnectStatusDomain {

@@ -87,6 +87,7 @@ sealed class SimpConnectMessage {
         val repeatMode: Int,
         val queue: List<TrackSummary> = emptyList(),
         val queueIndex: Int = 0,
+        val timestampMs: Long = 0L,
     ) : SimpConnectMessage()
 
     // ========== Commands ==========

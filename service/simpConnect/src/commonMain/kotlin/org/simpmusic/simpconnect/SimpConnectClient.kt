@@ -215,7 +215,7 @@ class SimpConnectClient(
                                 repeatMode = msg.repeatMode,
                                 queue = msg.queue,
                                 queueIndex = msg.queueIndex,
-                                lastSyncTimestamp = System.currentTimeMillis(),
+                                lastSyncTimestamp = if (msg.timestampMs > 0) msg.timestampMs else System.currentTimeMillis(),
                             )
                         }
                         is SimpConnectMessage.HandoffPayload -> {
