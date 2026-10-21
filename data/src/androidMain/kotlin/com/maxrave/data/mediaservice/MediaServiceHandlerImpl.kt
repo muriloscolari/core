@@ -1027,7 +1027,11 @@ internal class MediaServiceHandlerImpl(
         when (playerEvent) {
             is PlayerEvent.UpdateVolume -> {
                 Logger.w(TAG, "onPlayerEvent: UpdateVolume ${playerEvent.newVolume}")
-                player.volume = playerEvent.newVolume.coerceIn(0f, 1f)
+                val volume = playerEvent.newVolume.coerceIn(0f, 1f)
+                player.volume = volume
+                // Keep the mirrored control state in sync: SimpConnect's state sync reads it, so
+                // without this the controller's slider snapped back to the old value.
+                _controlState.update { it.copy(volume = volume) }
             }
 
             PlayerEvent.Backward -> {

@@ -1111,7 +1111,10 @@ class JvmMediaPlayerHandlerImpl(
         when (playerEvent) {
             is PlayerEvent.UpdateVolume -> {
                 Logger.w(TAG, "onPlayerEvent: UpdateVolume ${playerEvent.newVolume}")
-                player.volume = playerEvent.newVolume
+                val volume = playerEvent.newVolume.coerceIn(0f, 1f)
+                player.volume = volume
+                // SimpConnect's state sync reports controlState.volume; keep it in sync.
+                _controlState.update { it.copy(volume = volume) }
             }
 
             PlayerEvent.Backward -> {
