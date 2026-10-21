@@ -4,6 +4,8 @@ import com.maxrave.ktorext.getEngine
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.client.request.header
 import io.ktor.client.request.get
 import io.ktor.client.request.post
@@ -12,6 +14,9 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.websocket.Frame
+import io.ktor.websocket.WebSocketSession
+import io.ktor.websocket.readText
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
@@ -22,6 +27,7 @@ class SyncClient(
     private val json = Json { ignoreUnknownKeys = true }
     private val http = HttpClient(getEngine()) {
         install(ContentNegotiation) { json(json) }
+        install(WebSockets)
         install(HttpTimeout) {
             connectTimeoutMillis = 10_000
             requestTimeoutMillis = 30_000
@@ -51,6 +57,26 @@ class SyncClient(
             error("device listing failed with HTTP ${response.status.value}: ${response.bodyAsText()}")
         }
         return response.body()
+    }
+
+    suspend fun connectNotifications(token: String): WebSocketSession {
+        val websocketUrl = baseUrl
+            .replaceFirst("https://", "wss://")
+            .replaceFirst("http://", "ws://")
+        return http.webSocketSession("$websocketUrl/v1/ws") {
+            header("Authorization", "Bearer $token")
+        }
+    }
+
+    suspend fun nextNotification(session: WebSocketSession): String? =
+        when (val frame = session.incoming.receive()) {
+            is Frame.Text -> frame.readText()
+            is Frame.Close -> null
+            else -> ""
+        }
+
+    suspend fun close() {
+        http.close()
     }
 
     suspend fun sync(token: String, request: SyncRequest): SyncResponse {
