@@ -7,6 +7,7 @@ import android.view.TextureView
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import com.maxrave.logger.Logger
 
@@ -83,6 +84,15 @@ internal class DelegatingForwardingPlayer(
         fun pause()
 
         fun setPlayWhenReady(playWhenReady: Boolean)
+
+        /** Current position in the queue published to MediaSession, or -1 when there is none. */
+        fun currentQueueIndex(): Int = -1
+
+        /** Seek to an index in the queue published to MediaSession. */
+        fun seekToQueueIndex(
+            index: Int,
+            positionMs: Long,
+        ) = Unit
     }
 
     /**
@@ -90,6 +100,11 @@ internal class DelegatingForwardingPlayer(
      * When null, all navigation methods fall back to the underlying ExoPlayer (single-item behavior).
      */
     var playlistNavigationProvider: PlaylistNavigationProvider? = null
+
+    // The real queue, in playback order, published to MediaSession. The delegate ExoPlayer only
+    // ever holds the current item; this is what lets Android Auto show its native queue button.
+    private var queueItems: List<MediaItem> = emptyList()
+    private var queueTimeline: Timeline = Timeline.EMPTY
 
     // ========== Playback-Ended Suppression ==========
 
@@ -119,14 +134,39 @@ internal class DelegatingForwardingPlayer(
     // Track all externally registered listeners so we can re-register them after delegate swap
     private val trackedListeners = mutableListOf<Player.Listener>()
 
+    // The delegate's timeline only ever has one window. Wrap every listener so MediaSession sees
+    // the real queue timeline even when ExoPlayer emits a source update for the single item.
+    private val listenerWrappers = mutableMapOf<Player.Listener, Player.Listener>()
+
     override fun addListener(listener: Player.Listener) {
-        trackedListeners.add(listener)
-        super.addListener(listener)
+        if (listener !in trackedListeners) {
+            trackedListeners.add(listener)
+        }
+        listenerWrappers.remove(listener)?.let { oldWrapper ->
+            super.removeListener(oldWrapper)
+        }
+
+        val wrapper =
+            object : Player.Listener by listener {
+                override fun onTimelineChanged(
+                    timeline: Timeline,
+                    reason: Int,
+                ) {
+                    listener.onTimelineChanged(queueTimeline, reason)
+                }
+            }
+        listenerWrappers[listener] = wrapper
+        super.addListener(wrapper)
     }
 
     override fun removeListener(listener: Player.Listener) {
         trackedListeners.remove(listener)
-        super.removeListener(listener)
+        val wrapper = listenerWrappers.remove(listener)
+        if (wrapper != null) {
+            super.removeListener(wrapper)
+        } else {
+            super.removeListener(listener)
+        }
     }
 
     // ========== Video Surface Tracking ==========
@@ -251,6 +291,31 @@ internal class DelegatingForwardingPlayer(
         }
     }
 
+    // ========== Queue Timeline ==========
+
+    /**
+     * Replaces the queue published to MediaSession.
+     *
+     * Called by [CrossfadeExoPlayerAdapter] whenever its internal playlist or shuffle order
+     * changes. Dispatching the timeline here, rather than relying on the delegate ExoPlayer's
+     * one-item timeline, is what makes Media3 populate the legacy session queue used by Android
+     * Auto.
+     */
+    fun setQueueItems(items: List<MediaItem>) {
+        if (items == queueItems) return
+        queueItems = items.toList()
+        queueTimeline = if (queueItems.isEmpty()) Timeline.EMPTY else MediaItemQueueTimeline(queueItems)
+
+        trackedListeners.forEach { listener ->
+            try {
+                listener.onTimelineChanged(queueTimeline, Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED)
+                listener.onAvailableCommandsChanged(getAvailableCommands())
+            } catch (e: Exception) {
+                Logger.e(TAG, "Error notifying listener about queue change: ${e.message}", e)
+            }
+        }
+    }
+
     // ========== Playlist Navigation Overrides ==========
 
     override fun getAvailableCommands(): Player.Commands {
@@ -269,6 +334,13 @@ internal class DelegatingForwardingPlayer(
         if (nav.hasPreviousMediaItem()) {
             builder.add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
         }
+        if (queueItems.isNotEmpty()) {
+            builder.add(Player.COMMAND_GET_TIMELINE)
+            builder.add(Player.COMMAND_SEEK_TO_MEDIA_ITEM)
+        } else {
+            builder.remove(Player.COMMAND_GET_TIMELINE)
+            builder.remove(Player.COMMAND_SEEK_TO_MEDIA_ITEM)
+        }
 
         return builder.build()
     }
@@ -283,9 +355,58 @@ internal class DelegatingForwardingPlayer(
                     return true // Always allow seeking to start of current track
                 Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM ->
                     return nav.hasPreviousMediaItem()
+                Player.COMMAND_GET_TIMELINE, Player.COMMAND_SEEK_TO_MEDIA_ITEM ->
+                    return queueItems.isNotEmpty()
             }
         }
         return super.isCommandAvailable(command)
+    }
+
+    override fun getCurrentTimeline(): Timeline = queueTimeline
+
+    override fun getMediaItemCount(): Int =
+        if (playlistNavigationProvider != null && queueItems.isNotEmpty()) {
+            queueItems.size
+        } else {
+            super.getMediaItemCount()
+        }
+
+    override fun getMediaItemAt(index: Int): MediaItem =
+        if (playlistNavigationProvider != null && index in queueItems.indices) {
+            queueItems[index]
+        } else {
+            super.getMediaItemAt(index)
+        }
+
+    override fun getCurrentMediaItemIndex(): Int {
+        val nav = playlistNavigationProvider ?: return super.getCurrentMediaItemIndex()
+        if (queueItems.isEmpty()) return 0
+        return nav.currentQueueIndex().coerceIn(0, queueItems.lastIndex)
+    }
+
+    override fun getCurrentPeriodIndex(): Int = getCurrentMediaItemIndex()
+
+    override fun seekToDefaultPosition(mediaItemIndex: Int) {
+        seekToQueueItem(mediaItemIndex, 0)
+    }
+
+    override fun seekTo(
+        mediaItemIndex: Int,
+        positionMs: Long,
+    ) {
+        seekToQueueItem(mediaItemIndex, positionMs)
+    }
+
+    private fun seekToQueueItem(
+        index: Int,
+        positionMs: Long,
+    ) {
+        val nav = playlistNavigationProvider
+        if (nav != null && queueItems.isNotEmpty() && index in queueItems.indices) {
+            nav.seekToQueueIndex(index, positionMs)
+        } else {
+            super.seekTo(index, positionMs)
+        }
     }
 
     override fun hasNextMediaItem(): Boolean =
@@ -382,10 +503,10 @@ internal class DelegatingForwardingPlayer(
         super.setMediaItems(mediaItems, startIndex, startPositionMs)
     }
 
-    // NOTE: Do NOT override getMediaItemCount() or getCurrentMediaItemIndex() here.
-    // These must remain consistent with the underlying ExoPlayer's Timeline (1 item, index 0).
-    // Media3's PlayerWrapper.createPositionInfo() validates that currentMediaItemIndex < timeline.windowCount.
-    // If we return the adapter's playlist index (e.g. 5) but Timeline only has 1 window, it crashes.
+    // The player exposed to MediaSession reports the adapter's real queue through
+    // getCurrentTimeline()/getMediaItemCount()/getCurrentMediaItemIndex(). Those overrides must
+    // stay mutually consistent because PlayerWrapper.createPositionInfo() validates that
+    // currentMediaItemIndex < timeline.windowCount.
 
     // ========== Delegate Swap ==========
 
@@ -413,7 +534,7 @@ internal class DelegatingForwardingPlayer(
         // 3. Remove all listeners from old delegate (ForwardingPlayer removes ForwardingListener wrappers)
         listenersToReAdd.forEach { listener ->
             try {
-                super.removeListener(listener)
+                super.removeListener(listenerWrappers[listener] ?: listener)
             } catch (e: Exception) {
                 Logger.w(TAG, "Error removing listener during swap: ${e.message}")
             }
@@ -424,7 +545,7 @@ internal class DelegatingForwardingPlayer(
 
         // 5. Re-add all listeners (ForwardingPlayer creates new ForwardingListener wrappers for new delegate)
         listenersToReAdd.forEach { listener ->
-            super.addListener(listener)
+            super.addListener(listenerWrappers[listener] ?: listener)
         }
 
         // 6. Re-attach video surface to the new delegate
@@ -466,6 +587,10 @@ internal class DelegatingForwardingPlayer(
 
         trackedListeners.forEach { listener ->
             try {
+                // The delegate's own timeline has a single window. Re-publish the real queue first
+                // so a delegate swap/transition cannot make MediaSession drop the Android Auto
+                // queue back to one item.
+                listener.onTimelineChanged(queueTimeline, Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED)
                 listener.onMediaItemTransition(mediaItem, Player.MEDIA_ITEM_TRANSITION_REASON_AUTO)
                 listener.onMediaMetadataChanged(metadata)
                 listener.onAvailableCommandsChanged(commands)
