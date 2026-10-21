@@ -4,6 +4,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -37,6 +38,35 @@ import com.maxrave.common.QUALITY as COMMON_QUALITY
 internal class DataStoreManagerImpl(
     private val settingsDataStore: DataStore<Preferences>,
 ) : DataStoreManager {
+    override val syncEnabled: Flow<Boolean> =
+        settingsDataStore.data.map { preferences -> preferences[SYNC_ENABLED] ?: false }
+
+    override suspend fun setSyncEnabled(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings -> settings[SYNC_ENABLED] = enabled }
+        }
+    }
+
+    override val syncServerUrl: Flow<String> =
+        settingsDataStore.data.map { preferences -> preferences[SYNC_SERVER_URL] ?: "" }
+
+    override suspend fun setSyncServerUrl(url: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings -> settings[SYNC_SERVER_URL] = url.trim().trimEnd('/') }
+        }
+    }
+
+    override val syncSession: Flow<String?> =
+        settingsDataStore.data.map { preferences -> preferences[SYNC_SESSION] }
+
+    override suspend fun setSyncSession(session: String?) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                if (session == null) settings.remove(SYNC_SESSION) else settings[SYNC_SESSION] = session
+            }
+        }
+    }
+
     override val appVersion: Flow<String> =
         settingsDataStore.data.map { preferences ->
             preferences[APP_VERSION] ?: ""
@@ -1898,6 +1928,9 @@ internal class DataStoreManagerImpl(
         val MOOD_AND_GENRES_CACHE = stringPreferencesKey("mood_and_genres_cache")
         val MOOD_ARTWORK_CACHE = stringPreferencesKey("mood_artwork_cache")
         val TASTE_PROFILE = stringPreferencesKey("ai_taste_profile")
+        val SYNC_ENABLED = booleanPreferencesKey("sync_enabled")
+        val SYNC_SERVER_URL = stringPreferencesKey("sync_server_url")
+        val SYNC_SESSION = stringPreferencesKey("sync_session")
         val QUALITY = stringPreferencesKey("quality")
         val DOWNLOAD_QUALITY = stringPreferencesKey("download_quality")
         val VIDEO_DOWNLOAD_QUALITY = stringPreferencesKey("video_download_quality")

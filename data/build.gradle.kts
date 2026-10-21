@@ -78,6 +78,7 @@ kotlin {
                 implementation(projects.kotlinYtmusicScraper)
                 implementation(projects.kizzy)
                 implementation(projects.listenTogether)
+                implementation(projects.sync)
 
                 // Last.fm (gated: real scrobbler for full builds, no-op stub for FOSS builds)
                 if (isFullBuild) {

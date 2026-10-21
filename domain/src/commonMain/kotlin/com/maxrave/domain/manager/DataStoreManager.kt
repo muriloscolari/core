@@ -5,6 +5,15 @@ import com.maxrave.domain.data.player.ReverbPreset
 import kotlinx.coroutines.flow.Flow
 
 interface DataStoreManager {
+    val syncEnabled: Flow<Boolean>
+    suspend fun setSyncEnabled(enabled: Boolean)
+
+    val syncServerUrl: Flow<String>
+    suspend fun setSyncServerUrl(url: String)
+
+    val syncSession: Flow<String?>
+    suspend fun setSyncSession(session: String?)
+
     val appVersion: Flow<String>
 
     suspend fun setAppVersion(version: String)
