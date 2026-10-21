@@ -19,11 +19,16 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
 import com.maxrave.common.MEDIA_NOTIFICATION
 import com.maxrave.domain.mediaservice.handler.MediaPlayerHandler
+import com.maxrave.domain.repository.SimpConnectRepository
 import com.maxrave.logger.Logger
 import com.maxrave.media3.R
 import com.maxrave.media3.extension.toCommandButton
 import com.maxrave.media3.utils.CoilBitmapLoader
 import com.maxrave.media3.utils.sizeLimitedForSession
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
@@ -38,6 +43,10 @@ internal class SimpleMediaService :
     // full build (plain ForwardingPlayer in the FOSS build).
     private val player: Player by inject<Player>(qualifier = named(com.maxrave.common.Config.MAIN_PLAYER))
     private val coilBitmapLoader: CoilBitmapLoader by inject<CoilBitmapLoader>()
+    private val simpConnectRepository: SimpConnectRepository by inject()
+
+    // Drives remote notification refreshes; lives with the service, not the session.
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private var mediaSession: MediaLibrarySession? = null
 
@@ -91,7 +100,7 @@ internal class SimpleMediaService :
             mediaSession =
                 provideMediaLibrarySession(
                     this,
-                    player,
+                    SimpConnectSessionPlayer(player, simpConnectRepository, serviceScope),
                     simpleMediaSessionCallback,
                 )
         }
@@ -150,6 +159,7 @@ internal class SimpleMediaService :
                 // Release handler (contains coroutines and jobs, which also releases the adapter)
                 simpleMediaServiceHandler.release()
                 mediaSession = null
+                serviceScope.cancel()
                 Logger.w("Service", "Simple Media Service Released")
             } catch (e: Exception) {
                 Logger.e("Service", "Error during release")

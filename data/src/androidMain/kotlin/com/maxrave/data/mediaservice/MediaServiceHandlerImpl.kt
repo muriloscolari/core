@@ -1025,7 +1025,10 @@ internal class MediaServiceHandlerImpl(
 
     override suspend fun onPlayerEvent(playerEvent: PlayerEvent) {
         when (playerEvent) {
-            is PlayerEvent.UpdateVolume -> {}
+            is PlayerEvent.UpdateVolume -> {
+                Logger.w(TAG, "onPlayerEvent: UpdateVolume ${playerEvent.newVolume}")
+                player.volume = playerEvent.newVolume.coerceIn(0f, 1f)
+            }
 
             PlayerEvent.Backward -> {
                 player.seekBack()

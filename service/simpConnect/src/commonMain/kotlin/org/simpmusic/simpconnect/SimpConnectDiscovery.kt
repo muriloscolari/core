@@ -5,6 +5,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,6 +40,7 @@ class SimpConnectDiscovery(
     private var cleanupJob: Job? = null
     private var periodicPingJob: Job? = null
 
+    @Volatile
     private var socket: DatagramSocket? = null
 
     fun start() {
@@ -90,9 +92,10 @@ class SimpConnectDiscovery(
         }
     }
 
-    private fun runListenerLoop() {
+    private suspend fun runListenerLoop() {
         val buf = ByteArray(2048)
-        while (scope.isActive) {
+        val context = currentCoroutineContext()
+        while (context.isActive) {
             try {
                 val sock = DatagramSocket(null).apply {
                     reuseAddress = true
@@ -103,13 +106,13 @@ class SimpConnectDiscovery(
                 socket = sock
                 Logger.d(TAG, "Discovery UDP socket bound to port $SIMP_CONNECT_DISCOVERY_PORT")
 
-                while (scope.isActive && !sock.isClosed) {
+                while (context.isActive && !sock.isClosed) {
                     val packet = DatagramPacket(buf, buf.size)
                     try {
                         sock.receive(packet)
                         handlePacket(packet, sock)
                     } catch (_: SocketTimeoutException) {
-                        // Regular timeout to allow checking scope.isActive
+                        // Regular timeout to allow checking cancellation
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
                         if (!sock.isClosed) {
@@ -124,8 +127,10 @@ class SimpConnectDiscovery(
                     socket?.close()
                 } catch (_: Exception) {}
                 socket = null
-                // Wait a bit before retrying bind
-                Thread.sleep(3000)
+                if (!context.isActive) break
+                // Wait a bit before retrying bind, but stay cancellable. A blocking Thread.sleep
+                // here used to keep the discovery alive forever after stop().
+                delay(3000)
             }
         }
     }

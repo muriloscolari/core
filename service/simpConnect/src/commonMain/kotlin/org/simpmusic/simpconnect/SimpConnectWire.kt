@@ -136,6 +136,9 @@ sealed class SimpConnectMessage {
         val playlistName: String? = null,
         val queue: List<TrackSummary> = emptyList(),
         val startIndex: Int = 0,
+        val playWhenReady: Boolean = true,
+        /** Where to start inside the selected track. Without it a handoff restarted mid-song. */
+        val positionMs: Long = 0L,
     ) : SimpConnectMessage()
 
     // ========== Playback Handoff ==========

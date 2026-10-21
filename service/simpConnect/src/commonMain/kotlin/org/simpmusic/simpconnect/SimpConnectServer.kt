@@ -18,7 +18,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,8 +28,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.security.SecureRandom
 import java.util.Collections
-import kotlin.random.Random
 
 private const val TAG = "SimpConnectServer"
 
@@ -58,6 +60,16 @@ class SimpConnectServer(
     private var boundPort: Int = 0
 
     private val connectedSessions = Collections.synchronizedSet(mutableSetOf<WebSocketSession>())
+    private val sessionDeviceIds = Collections.synchronizedMap(mutableMapOf<WebSocketSession, String>())
+
+    // All StateSync broadcasts go through a single conflated channel. Playback progress used to
+    // produce one broadcast per player tick and every tick launched its own coroutine, which
+    // reordered frames and made the controller's timeline jump back and forth. The conflated
+    // channel keeps only the latest state and guarantees they are sent in order.
+    private val stateChannel = Channel<SimpConnectMessage.StateSync>(Channel.CONFLATED)
+    private var broadcasterJob: Job? = null
+
+    private val secureRandom = SecureRandom()
 
     private val _connectedControllersCount = MutableStateFlow(0)
     val connectedControllersCount = _connectedControllersCount.asStateFlow()
@@ -99,15 +111,30 @@ class SimpConnectServer(
 
         server = embedded
         boundPort = chosenPort
+        broadcasterJob =
+            scope.launch(Dispatchers.IO) {
+                for (state in stateChannel) {
+                    sendStateToControllers(state)
+                }
+            }
         Logger.d(TAG, "SimpConnectServer started on port $boundPort")
         return boundPort
     }
 
     suspend fun stop() {
+        broadcasterJob?.cancel()
+        broadcasterJob = null
         val s = server ?: return
         server = null
         boundPort = 0
+        val sessions = synchronized(connectedSessions) { connectedSessions.toList() }
+        for (session in sessions) {
+            runCatching {
+                session.close(CloseReason(CloseReason.Codes.GOING_AWAY, "Server shutting down"))
+            }
+        }
         connectedSessions.clear()
+        sessionDeviceIds.clear()
         _connectedControllersCount.value = 0
         withContext(NonCancellable + Dispatchers.IO) {
             runCatching { s.stop(gracePeriodMillis = 100, timeoutMillis = 500) }
@@ -117,19 +144,24 @@ class SimpConnectServer(
 
     fun broadcastStateSync(state: SimpConnectMessage.StateSync) {
         if (connectedSessions.isEmpty()) return
+        stateChannel.trySend(state)
+    }
+
+    private suspend fun sendStateToControllers(state: SimpConnectMessage.StateSync) {
+        val sessionsCopy = synchronized(connectedSessions) { connectedSessions.toList() }
+        if (sessionsCopy.isEmpty()) return
         val json = simpConnectJson.encodeToString(SimpConnectMessage.serializer(), state)
         val frame = Frame.Text(json)
-        val sessionsCopy = synchronized(connectedSessions) { connectedSessions.toList() }
-
-        scope.launch(Dispatchers.IO) {
-            for (session in sessionsCopy) {
-                try {
-                    if (session.isActive) {
-                        session.send(frame)
-                    }
-                } catch (e: Exception) {
-                    Logger.w(TAG, "Failed to send StateSync to controller: ${e.message}")
+        for (session in sessionsCopy) {
+            try {
+                if (session.isActive) {
+                    session.send(frame)
                 }
+            } catch (e: Exception) {
+                Logger.w(TAG, "Failed to send StateSync to controller: ${e.message}")
+                connectedSessions.remove(session)
+                sessionDeviceIds.remove(session)
+                _connectedControllersCount.value = connectedSessions.size
             }
         }
     }
@@ -139,7 +171,12 @@ class SimpConnectServer(
 
         // 1. Handshake: Await Hello
         val firstFrame = try {
-            session.incoming.receive()
+            // A connection that never sends Hello must not leak a coroutine forever.
+            withTimeoutOrNull(10_000L) { session.incoming.receive() }
+                ?: run {
+                    session.close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Hello timeout"))
+                    return
+                }
         } catch (_: ClosedReceiveChannelException) {
             return
         } catch (e: Exception) {
@@ -196,6 +233,9 @@ class SimpConnectServer(
             } ?: false
 
             if (!approved) {
+                // Tell the repository to drop the approval dialog if the request timed out while
+                // the user was not looking at the screen, otherwise it would stay there forever.
+                runCatching { request.onResponse(false) }
                 val rejectAck = SimpConnectMessage.HelloAck(
                     status = SimpConnectMessage.HandshakeStatus.REJECTED,
                     deviceName = localDeviceName(),
@@ -217,7 +257,24 @@ class SimpConnectServer(
         }
 
         // 3. Connection accepted!
+        // A controller that reconnects (app restart, network change) leaves its previous session
+        // behind until the read loop notices. Close the stale one so commands and state updates
+        // are not duplicated.
+        val staleSessions =
+            synchronized(sessionDeviceIds) {
+                sessionDeviceIds
+                    .filterValues { it == hello.deviceId }
+                    .keys
+                    .filter { it !== session }
+            }
+        for (stale in staleSessions) {
+            connectedSessions.remove(stale)
+            sessionDeviceIds.remove(stale)
+            runCatching { stale.close(CloseReason(CloseReason.Codes.NORMAL, "Replaced by new session")) }
+        }
+
         connectedSessions.add(session)
+        sessionDeviceIds[session] = hello.deviceId
         _connectedControllersCount.value = connectedSessions.size
         Logger.d(TAG, "Controller ${hello.deviceName} connected. Total controllers: ${_connectedControllersCount.value}")
 
@@ -289,8 +346,17 @@ class SimpConnectServer(
                             broadcastStateSync(listener.getCurrentState())
                         }
                         is SimpConnectMessage.HandoffRequest -> {
-                            val payload = listener.getHandoffPayload()
+                            // Read the play state BEFORE pausing: the payload tells the controller
+                            // whether to resume, and after onPause() the target always reports
+                            // isPlaying = false — which used to hand back a paused session.
+                            val wasPlaying = listener.getCurrentState().isPlaying
+                            // Pause *here* before handing the payload over. If only the controller
+                            // paused itself, both devices would keep playing after the transfer.
+                            listener.onPause()
+                            kotlinx.coroutines.delay(80)
+                            val payload = listener.getHandoffPayload().copy(isPlaying = wasPlaying)
                             session.send(Frame.Text(simpConnectJson.encodeToString(SimpConnectMessage.serializer(), payload)))
+                            broadcastStateSync(listener.getCurrentState())
                         }
                         is SimpConnectMessage.Ping -> {
                             session.send(Frame.Text(simpConnectJson.encodeToString(SimpConnectMessage.serializer(), SimpConnectMessage.Pong)))
@@ -305,13 +371,15 @@ class SimpConnectServer(
             }
         } finally {
             connectedSessions.remove(session)
+            sessionDeviceIds.remove(session)
             _connectedControllersCount.value = connectedSessions.size
             Logger.d(TAG, "Controller ${hello.deviceName} disconnected. Remaining: ${_connectedControllersCount.value}")
         }
     }
 
     private fun generateAuthKey(): String {
-        val bytes = Random.Default.nextBytes(16)
+        val bytes = ByteArray(16)
+        secureRandom.nextBytes(bytes)
         return bytes.joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
     }
 }

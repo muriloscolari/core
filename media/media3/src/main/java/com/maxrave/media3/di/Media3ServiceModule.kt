@@ -59,6 +59,7 @@ import com.maxrave.domain.repository.HomeRepository
 import com.maxrave.domain.repository.LocalPlaylistRepository
 import com.maxrave.domain.repository.PlaylistRepository
 import com.maxrave.domain.repository.SearchRepository
+import com.maxrave.domain.repository.SimpConnectRepository
 import com.maxrave.domain.repository.SongRepository
 import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.logger.Logger
@@ -225,6 +226,7 @@ private val mediaServiceModule =
                 get<HomeRepository>(),
                 get<StreamRepository>(),
                 get<DataStoreManager>(),
+                get<SimpConnectRepository>(),
             )
         }
 

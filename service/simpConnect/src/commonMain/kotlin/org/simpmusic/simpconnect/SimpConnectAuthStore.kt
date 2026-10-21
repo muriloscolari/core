@@ -7,7 +7,7 @@ interface SimpConnectAuthStore {
 }
 
 class InMemorySimpConnectAuthStore : SimpConnectAuthStore {
-    private val approvedKeys = mutableMapOf<String, String>()
+    private val approvedKeys = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     override fun isDeviceApproved(deviceId: String, authKey: String?): Boolean {
         if (authKey.isNullOrBlank()) return false
@@ -19,7 +19,5 @@ class InMemorySimpConnectAuthStore : SimpConnectAuthStore {
         approvedKeys[deviceId] = authKey
     }
 
-    override fun getSavedAuthKey(deviceId: String): String? {
-        return approvedKeys[deviceId]
-    }
+    override fun getSavedAuthKey(deviceId: String): String? = approvedKeys[deviceId]
 }

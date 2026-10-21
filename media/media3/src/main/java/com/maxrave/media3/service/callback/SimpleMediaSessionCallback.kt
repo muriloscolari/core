@@ -39,6 +39,7 @@ import com.maxrave.domain.repository.HomeRepository
 import com.maxrave.domain.repository.LocalPlaylistRepository
 import com.maxrave.domain.repository.PlaylistRepository
 import com.maxrave.domain.repository.SearchRepository
+import com.maxrave.domain.repository.SimpConnectRepository
 import com.maxrave.domain.repository.SongRepository
 import com.maxrave.domain.repository.StreamRepository
 import com.maxrave.domain.utils.Resource
@@ -76,6 +77,7 @@ internal class SimpleMediaSessionCallback(
     private val homeRepository: HomeRepository,
     private val streamRepository: StreamRepository,
     private val dataStoreManager: DataStoreManager,
+    private val simpConnectRepository: SimpConnectRepository,
 ) : MediaLibrarySession.Callback {
     var toggleLike: () -> Unit = {
         mediaPlayerHandler.toggleLike()
@@ -119,6 +121,12 @@ internal class SimpleMediaSessionCallback(
         playerCommand: Int,
     ): Int {
         Logger.w(TAG, "Player Command $playerCommand")
+        // While SimpConnect controls another device the session player is the remote-aware
+        // wrapper, which already turns these commands into wire messages. Routing them through
+        // the local handler as well would make both devices skip at once.
+        if (simpConnectRepository.activeRemoteDevice.value != null) {
+            return super.onPlayerCommandRequest(session, controller, playerCommand)
+        }
         scope.launch {
             when (playerCommand) {
                 COMMAND_SEEK_TO_NEXT -> {
