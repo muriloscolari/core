@@ -70,6 +70,7 @@ fun GenericMediaItem.toSongEntity(): SongEntity =
 
 fun SongEntity.toGenericMediaItem(): GenericMediaItem {
     val isSong = (this.thumbnails?.contains("w544") == true && this.thumbnails.contains("h544"))
+    val duration = if (this.durationSeconds > 0) this.durationSeconds.toLong() * 1000L else null
     return GenericMediaItem(
         mediaId = this.videoId,
         uri = this.videoId,
@@ -80,6 +81,7 @@ fun SongEntity.toGenericMediaItem(): GenericMediaItem {
                 albumTitle = this.albumName,
                 artworkUri = this.thumbnails,
                 description = if (isSong) MERGING_DATA_TYPE.SONG else MERGING_DATA_TYPE.VIDEO,
+                durationMs = duration,
             ),
         customCacheKey = this.videoId,
     )
@@ -100,6 +102,7 @@ fun Track.toGenericMediaItem(): GenericMediaItem {
                 this.thumbnails?.last()?.height != null
         ) &&
             (!thumbUrl.contains("hq720") && !thumbUrl.contains("maxresdefault"))
+    val duration = this.durationSeconds?.takeIf { it > 0 }?.toLong()?.times(1000L)
     return GenericMediaItem(
         mediaId = this.videoId,
         uri = this.videoId,
@@ -110,6 +113,7 @@ fun Track.toGenericMediaItem(): GenericMediaItem {
                 albumTitle = this.album?.name,
                 artworkUri = thumbUrl,
                 description = if (isSong) MERGING_DATA_TYPE.SONG else MERGING_DATA_TYPE.VIDEO,
+                durationMs = duration,
             ),
         customCacheKey = this.videoId,
     )

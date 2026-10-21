@@ -590,6 +590,7 @@ fun GenericMediaMetadata.toMedia3MediaMetadata(): MediaMetadata =
             albumTitle?.let { setAlbumTitle(it) }
             artworkUri?.let { setArtworkUri(it.toUri()) }
             description?.let { setDescription(it) }
+            durationMs?.let { setDurationMs(it) }
         }.build()
 
 fun MediaMetadata.toGenericMediaMetadata(): GenericMediaMetadata =
@@ -599,6 +600,7 @@ fun MediaMetadata.toGenericMediaMetadata(): GenericMediaMetadata =
         albumTitle = albumTitle?.toString(),
         artworkUri = artworkUri.toString(),
         description = description?.toString(),
+        durationMs = durationMs,
     )
 
 internal fun GenericPlaybackParameters.toMedia3PlaybackParameters(): PlaybackParameters = PlaybackParameters(speed, pitch)

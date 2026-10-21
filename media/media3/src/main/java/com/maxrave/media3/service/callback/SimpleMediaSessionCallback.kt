@@ -101,16 +101,25 @@ internal class SimpleMediaSessionCallback(
                 .add(SessionCommand(MEDIA_CUSTOM_COMMAND.SHUFFLE, Bundle()))
                 .add(SessionCommand(MEDIA_CUSTOM_COMMAND.GET_PLATFORM_TOKEN, Bundle()))
                 .build()
+        val playerCommandsBuilder =
+            Player.Commands
+                .Builder()
+                .addAllCommands()
+
+        // SystemUI on certain Android vendor skins (like Xiaomi HyperOS) relies on single-track
+        // sessions without timeline paging to render its punch-hole Dynamic Island / Focus Notification.
+        // We remove COMMAND_GET_TIMELINE specifically for SystemUI while keeping it for other
+        // controllers (like Android Auto and the session's internal notification controller so the car
+        // screen gets its native queue button).
+        if (controller.packageName == "com.android.systemui") {
+            playerCommandsBuilder.remove(COMMAND_GET_TIMELINE)
+        }
+
         return MediaSession.ConnectionResult
             .AcceptedResultBuilder(session)
             .setAvailableSessionCommands(sessionCommands)
-            .setAvailablePlayerCommands(
-                Player.Commands
-                    .Builder()
-                    .addAllCommands()
-                    .remove(COMMAND_GET_TIMELINE)
-                    .build(),
-            ).build()
+            .setAvailablePlayerCommands(playerCommandsBuilder.build())
+            .build()
     }
 
     override fun onPlayerCommandRequest(
