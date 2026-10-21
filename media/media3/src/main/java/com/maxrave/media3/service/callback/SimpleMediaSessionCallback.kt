@@ -236,8 +236,20 @@ internal class SimpleMediaSessionCallback(
         session: MediaLibrarySession,
         browser: MediaSession.ControllerInfo,
         params: MediaLibraryService.LibraryParams?,
-    ): ListenableFuture<LibraryResult<MediaItem>> =
-        Futures.immediateFuture(
+    ): ListenableFuture<LibraryResult<MediaItem>> {
+        val rootExtras =
+            Bundle().apply {
+                putBoolean(MEDIA_SEARCH_SUPPORTED, true)
+                putBoolean(CONTENT_STYLE_SUPPORTED, true)
+                putInt(CONTENT_STYLE_BROWSABLE_HINT, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
+                putInt(CONTENT_STYLE_PLAYABLE_HINT, CONTENT_STYLE_LIST_ITEM_HINT_VALUE)
+            }
+        val libraryParams =
+            MediaLibraryService.LibraryParams
+                .Builder()
+                .setExtras(rootExtras)
+                .build()
+        return Futures.immediateFuture(
             LibraryResult.ofItem(
                 MediaItem
                     .Builder()
@@ -250,9 +262,10 @@ internal class SimpleMediaSessionCallback(
                             .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
                             .build(),
                     ).build(),
-                params,
+                libraryParams,
             ),
         )
+    }
 
     override fun onSearch(
         session: MediaLibrarySession,
@@ -313,10 +326,10 @@ internal class SimpleMediaSessionCallback(
         scope.future(Dispatchers.IO) {
             val rootExtras =
                 Bundle().apply {
-                    putBoolean(
-                        MEDIA_SEARCH_SUPPORTED,
-                        true,
-                    )
+                    putBoolean(MEDIA_SEARCH_SUPPORTED, true)
+                    putBoolean(CONTENT_STYLE_SUPPORTED, true)
+                    putInt(CONTENT_STYLE_BROWSABLE_HINT, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
+                    putInt(CONTENT_STYLE_PLAYABLE_HINT, CONTENT_STYLE_LIST_ITEM_HINT_VALUE)
                 }
             val libraryParams =
                 MediaLibraryService.LibraryParams
@@ -399,6 +412,7 @@ internal class SimpleMediaSessionCallback(
                                     "YouTube Music",
                                     "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-songs-delhi-1200.png".toUri(),
                                     MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                    isGrid = true,
                                 ),
                             )
                             val ytPlaylists = playlistRepository.getLibraryPlaylist().firstOrNull()
@@ -412,6 +426,7 @@ internal class SimpleMediaSessionCallback(
                                             listOfNotNull(yt.author, yt.itemCount).joinToString(" • ").ifEmpty { null },
                                             yt.thumbnails.lastOrNull()?.url?.toUri(),
                                             MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                            isGrid = true,
                                         ),
                                     )
                                 }
@@ -428,6 +443,7 @@ internal class SimpleMediaSessionCallback(
                                         lp.author,
                                         lp.thumbnails?.toUri(),
                                         MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                        isGrid = true,
                                     ),
                                 )
                             }
@@ -442,6 +458,7 @@ internal class SimpleMediaSessionCallback(
                                     "${local.tracks?.size ?: 0} ${context.getString(R.string.track)}",
                                     local.thumbnail?.toUri(),
                                     MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                    isGrid = true,
                                 ),
                             )
                         }
@@ -508,6 +525,7 @@ internal class SimpleMediaSessionCallback(
                                                             ?.url
                                                             ?.toUri(),
                                                     mediaType = MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                                    isGrid = true,
                                                 )
                                             } else if (it?.videoId != null) {
                                                 it
@@ -935,6 +953,7 @@ internal class SimpleMediaSessionCallback(
         subtitle: String?,
         iconUri: Uri?,
         mediaType: Int = MediaMetadata.MEDIA_TYPE_MUSIC,
+        isGrid: Boolean = false,
     ) = MediaItem
         .Builder()
         .setMediaId(id)
@@ -948,6 +967,15 @@ internal class SimpleMediaSessionCallback(
                 .setIsPlayable(false)
                 .setIsBrowsable(true)
                 .setMediaType(mediaType)
+                .apply {
+                    if (isGrid) {
+                        setExtras(
+                            Bundle().apply {
+                                putInt(CONTENT_STYLE_BROWSABLE_HINT, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
+                            },
+                        )
+                    }
+                }
                 .build(),
         ).build()
 
@@ -998,5 +1026,10 @@ internal class SimpleMediaSessionCallback(
         const val FAVORITE = "favorite"
         const val DOWNLOADED = "downloaded"
         const val MEDIA_SEARCH_SUPPORTED = "android.media.browse.SEARCH_SUPPORTED"
+        const val CONTENT_STYLE_SUPPORTED = "android.media.browse.CONTENT_STYLE_SUPPORTED"
+        const val CONTENT_STYLE_BROWSABLE_HINT = "android.media.browse.CONTENT_STYLE_BROWSABLE_HINT"
+        const val CONTENT_STYLE_PLAYABLE_HINT = "android.media.browse.CONTENT_STYLE_PLAYABLE_HINT"
+        const val CONTENT_STYLE_LIST_ITEM_HINT_VALUE = 1
+        const val CONTENT_STYLE_GRID_ITEM_HINT_VALUE = 2
     }
 }
