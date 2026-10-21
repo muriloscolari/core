@@ -17,6 +17,8 @@ import io.ktor.websocket.send
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlin.coroutines.ContinuationInterceptor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -70,6 +72,19 @@ class SimpConnectServer(
     private var broadcasterJob: Job? = null
 
     private val secureRandom = SecureRandom()
+
+    /**
+     * The player may only be touched from its own thread (Android main looper for ExoPlayer, the
+     * single desktop player thread on JVM). Ktor delivers frames on its I/O threads, and calling
+     * the listener there threw "Player is accessed on the wrong thread", which escaped the read
+     * loop and silently killed the controller's session.
+     */
+    private val playerDispatcher: CoroutineDispatcher =
+        (scope.coroutineContext[ContinuationInterceptor] as? CoroutineDispatcher) ?: Dispatchers.Default
+
+    private suspend fun <T> onPlayer(block: () -> T): T = withContext(playerDispatcher) { block() }
+
+    private suspend fun currentState(): SimpConnectMessage.StateSync = onPlayer { listener.getCurrentState() }
 
     private val _connectedControllersCount = MutableStateFlow(0)
     val connectedControllersCount = _connectedControllersCount.asStateFlow()
@@ -280,7 +295,7 @@ class SimpConnectServer(
 
         // Send current state right away
         try {
-            val initialState = listener.getCurrentState()
+            val initialState = currentState()
             session.send(Frame.Text(simpConnectJson.encodeToString(SimpConnectMessage.serializer(), initialState)))
         } catch (e: Exception) {
             Logger.w(TAG, "Failed to send initial StateSync: ${e.message}")
@@ -294,74 +309,79 @@ class SimpConnectServer(
                         simpConnectJson.decodeFromString(SimpConnectMessage.serializer(), frame.readText())
                     }.getOrNull() ?: continue
 
-                    when (msg) {
+                    // One failing command must never end the session.
+                    try { when (msg) {
                         is SimpConnectMessage.PlayPause -> {
-                            listener.onPlayPause()
-                            kotlinx.coroutines.delay(50)
-                            broadcastStateSync(listener.getCurrentState())
+                            onPlayer { listener.onPlayPause() }
+                            kotlinx.coroutines.delay(150)
+                            broadcastStateSync(currentState())
                         }
                         is SimpConnectMessage.Play -> {
-                            listener.onPlay()
-                            kotlinx.coroutines.delay(50)
-                            broadcastStateSync(listener.getCurrentState())
+                            onPlayer { listener.onPlay() }
+                            kotlinx.coroutines.delay(150)
+                            broadcastStateSync(currentState())
                         }
                         is SimpConnectMessage.Pause -> {
-                            listener.onPause()
-                            kotlinx.coroutines.delay(50)
-                            broadcastStateSync(listener.getCurrentState())
+                            onPlayer { listener.onPause() }
+                            kotlinx.coroutines.delay(150)
+                            broadcastStateSync(currentState())
                         }
                         is SimpConnectMessage.Next -> {
-                            listener.onNext()
-                            kotlinx.coroutines.delay(50)
-                            broadcastStateSync(listener.getCurrentState())
+                            onPlayer { listener.onNext() }
+                            kotlinx.coroutines.delay(150)
+                            broadcastStateSync(currentState())
                         }
                         is SimpConnectMessage.Previous -> {
-                            listener.onPrevious()
-                            kotlinx.coroutines.delay(50)
-                            broadcastStateSync(listener.getCurrentState())
+                            onPlayer { listener.onPrevious() }
+                            kotlinx.coroutines.delay(150)
+                            broadcastStateSync(currentState())
                         }
                         is SimpConnectMessage.SeekTo -> {
-                            listener.onSeekTo(msg.positionMs)
-                            kotlinx.coroutines.delay(50)
-                            broadcastStateSync(listener.getCurrentState())
+                            onPlayer { listener.onSeekTo(msg.positionMs) }
+                            kotlinx.coroutines.delay(150)
+                            broadcastStateSync(currentState())
                         }
                         is SimpConnectMessage.SetVolume -> {
-                            listener.onSetVolume(msg.volume)
-                            kotlinx.coroutines.delay(50)
-                            broadcastStateSync(listener.getCurrentState())
+                            onPlayer { listener.onSetVolume(msg.volume) }
+                            kotlinx.coroutines.delay(150)
+                            broadcastStateSync(currentState())
                         }
                         is SimpConnectMessage.SetShuffle -> {
-                            listener.onSetShuffle(msg.enabled)
-                            kotlinx.coroutines.delay(50)
-                            broadcastStateSync(listener.getCurrentState())
+                            onPlayer { listener.onSetShuffle(msg.enabled) }
+                            kotlinx.coroutines.delay(150)
+                            broadcastStateSync(currentState())
                         }
                         is SimpConnectMessage.SetRepeat -> {
-                            listener.onSetRepeat(msg.mode)
-                            kotlinx.coroutines.delay(50)
-                            broadcastStateSync(listener.getCurrentState())
+                            onPlayer { listener.onSetRepeat(msg.mode) }
+                            kotlinx.coroutines.delay(150)
+                            broadcastStateSync(currentState())
                         }
                         is SimpConnectMessage.PlayTrack -> {
-                            listener.onPlayTrack(msg)
-                            kotlinx.coroutines.delay(100)
-                            broadcastStateSync(listener.getCurrentState())
+                            onPlayer { listener.onPlayTrack(msg) }
+                            kotlinx.coroutines.delay(150)
+                            broadcastStateSync(currentState())
                         }
                         is SimpConnectMessage.HandoffRequest -> {
                             // Read the play state BEFORE pausing: the payload tells the controller
                             // whether to resume, and after onPause() the target always reports
                             // isPlaying = false — which used to hand back a paused session.
-                            val wasPlaying = listener.getCurrentState().isPlaying
+                            val wasPlaying = currentState().isPlaying
                             // Pause *here* before handing the payload over. If only the controller
                             // paused itself, both devices would keep playing after the transfer.
-                            listener.onPause()
-                            kotlinx.coroutines.delay(80)
-                            val payload = listener.getHandoffPayload().copy(isPlaying = wasPlaying)
+                            onPlayer { listener.onPause() }
+                            kotlinx.coroutines.delay(150)
+                            val payload = onPlayer { listener.getHandoffPayload() }.copy(isPlaying = wasPlaying)
                             session.send(Frame.Text(simpConnectJson.encodeToString(SimpConnectMessage.serializer(), payload)))
-                            broadcastStateSync(listener.getCurrentState())
+                            broadcastStateSync(currentState())
                         }
                         is SimpConnectMessage.Ping -> {
                             session.send(Frame.Text(simpConnectJson.encodeToString(SimpConnectMessage.serializer(), SimpConnectMessage.Pong)))
                         }
                         else -> {}
+                    } } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Logger.w(TAG, "Failed to handle ${msg::class.simpleName}: ${e.message}")
                     }
                 }
             }
