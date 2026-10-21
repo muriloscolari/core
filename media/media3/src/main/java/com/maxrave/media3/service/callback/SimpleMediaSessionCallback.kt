@@ -346,6 +346,7 @@ internal class SimpleMediaSessionCallback(
                                 context.getString(R.string.available_online),
                                 drawableUri(R.drawable.home_android_auto),
                                 MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
+                                isGrid = true,
                             ),
                             browsableMediaItem(
                                 SONG,
@@ -353,6 +354,7 @@ internal class SimpleMediaSessionCallback(
                                 null,
                                 drawableUri(R.drawable.baseline_album_24),
                                 MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                isGrid = true,
                             ),
                             browsableMediaItem(
                                 FAVORITE,
@@ -360,6 +362,7 @@ internal class SimpleMediaSessionCallback(
                                 null,
                                 drawableUri(R.drawable.baseline_favorite_24),
                                 MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                isGrid = true,
                             ),
                             browsableMediaItem(
                                 DOWNLOADED,
@@ -367,6 +370,7 @@ internal class SimpleMediaSessionCallback(
                                 null,
                                 drawableUri(R.drawable.baseline_downloaded),
                                 MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                                isGrid = true,
                             ),
                             browsableMediaItem(
                                 PLAYLIST,
@@ -374,6 +378,7 @@ internal class SimpleMediaSessionCallback(
                                 null,
                                 drawableUri(R.drawable.baseline_playlist_add_24),
                                 MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS,
+                                isGrid = true,
                             ),
                         )
                     }
@@ -496,8 +501,9 @@ internal class SimpleMediaSessionCallback(
                                 "$HOME/${it.title}",
                                 it.title,
                                 it.subtitle,
-                                null,
+                                it.thumbnail?.lastOrNull()?.url?.toUri(),
                                 MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
+                                isGrid = true,
                             )
                         }
                     }
