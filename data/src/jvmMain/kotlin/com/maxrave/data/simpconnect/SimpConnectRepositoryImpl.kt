@@ -19,6 +19,7 @@ import com.maxrave.domain.mediaservice.handler.QueueData
 import com.maxrave.domain.mediaservice.handler.RepeatState
 import com.maxrave.domain.repository.SimpConnectRepository
 import com.maxrave.logger.Logger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -245,14 +246,22 @@ class SimpConnectRepositoryImpl(
 
     private fun suspendLocalPlayer() {
         if (localPlayerSuspended) return
+        if (mediaPlayerHandler.player.mediaItemCount == 0 &&
+            mediaPlayerHandler.nowPlaying.value == null
+        ) {
+            return
+        }
         localPlayerSuspended = true
         scope.launch {
-            runCatching {
+            try {
                 val player = mediaPlayerHandler.player
                 player.playWhenReady = false
                 player.stop()
-                player.clearMediaItems()
-            }.onFailure { Logger.w(TAG, "Failed to suspend local player: ${it.message}") }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Logger.w(TAG, "Failed to suspend local player: ${error.message}")
+            }
         }
     }
 
@@ -260,12 +269,16 @@ class SimpConnectRepositoryImpl(
         if (!localPlayerSuspended) return
         localPlayerSuspended = false
         scope.launch {
-            runCatching {
+            try {
                 val player = mediaPlayerHandler.player
-                // Re-arm the local queue at its old position, paused: coming back must not blast audio.
+                // The stopped player retains its queue and position. Keep it paused when control
+                // returns instead of restoring an unrelated persisted queue.
                 player.playWhenReady = false
-                mediaPlayerHandler.mayBeRestoreQueue()
-            }.onFailure { Logger.w(TAG, "Failed to resume local player: ${it.message}") }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Logger.w(TAG, "Failed to resume local player: ${error.message}")
+            }
         }
     }
 
