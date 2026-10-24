@@ -709,9 +709,11 @@ class MpvPlayer private constructor(
     }
 
     /**
-     * Volume is applied via mpv's software volume with a cubic perceptual curve.
-     * Human hearing perceives loudness logarithmically. A linear scale makes 1% sound extremely loud (-40 dB).
-     * Cubing the fraction gives smooth, natural attenuation where 1-10% is whisper quiet.
+     * Volume is applied via mpv's software volume with a balanced perceptual curve (exponent 1.45).
+     * Human hearing perceives loudness logarithmically. A pure cubic scale (pow 3.0) drops too steeply,
+     * making everything below 55% inaudible and squeezing the usable range into 55-100%.
+     * An exponent of 1.45 gives a natural, granular curve where 10-30% is comfortable background listening,
+     * 50% is moderate volume (~37%), and 1-5% is whisper quiet, without silencing the audio prematurely.
      * Software volume in mpv natively accepts 0.0..100.0.
      * We scale by fadePercent and sleepPercent for seamless crossfading and sleep timer.
      * Crucially, we do NOT touch ao-volume so the OS mixer (e.g. Windows Volume Mixer) operates
@@ -719,7 +721,7 @@ class MpvPlayer private constructor(
      */
     private fun applyVolume() =
         synchronized(volumeLock) {
-            val masterPerceptual = masterFraction.pow(3.0) * (sleepPercent / 100.0)
+            val masterPerceptual = if (masterFraction <= 0.0) 0.0 else masterFraction.pow(1.45) * (sleepPercent / 100.0)
             val finalVolume = masterPerceptual * (fadePercent / 100.0) * 100.0
             setPropertyDouble("volume", finalVolume.coerceIn(0.0, 100.0))
         }
