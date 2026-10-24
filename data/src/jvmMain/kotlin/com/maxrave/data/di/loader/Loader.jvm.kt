@@ -27,6 +27,7 @@ actual fun loadSimpConnectModule() {
                 com.maxrave.data.simpconnect.SimpConnectRepositoryImpl(
                     mediaPlayerHandler = get(),
                     dataStoreManager = get(),
+                    songRepository = get(),
                     scope = get(org.koin.core.qualifier.named(com.maxrave.common.Config.SERVICE_SCOPE)),
                 ).also { it.start() }
             }

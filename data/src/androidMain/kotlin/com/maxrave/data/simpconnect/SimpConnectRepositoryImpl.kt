@@ -1,8 +1,11 @@
 package com.maxrave.data.simpconnect
 
+import android.content.Context
+import android.net.wifi.WifiManager
 import android.os.Build
 import com.maxrave.common.Config
 import com.maxrave.common.MERGING_DATA_TYPE
+import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.model.searchResult.songs.Album
 import com.maxrave.domain.data.model.searchResult.songs.Artist
@@ -13,6 +16,7 @@ import com.maxrave.domain.data.model.simpconnect.SimpConnectAuthRequestDomain
 import com.maxrave.domain.data.model.simpconnect.SimpConnectStatusDomain
 import com.maxrave.domain.data.model.simpconnect.TrackSummaryDomain
 import com.maxrave.domain.data.player.GenericMediaItem
+import com.maxrave.domain.data.player.GenericMediaMetadata
 import com.maxrave.domain.extension.toGenericMediaItem
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.mediaservice.handler.MediaPlayerHandler
@@ -21,6 +25,10 @@ import com.maxrave.domain.mediaservice.handler.QueueData
 import com.maxrave.domain.mediaservice.handler.RepeatState
 import com.maxrave.domain.mediaservice.handler.SimpleMediaState
 import com.maxrave.domain.repository.SimpConnectRepository
+import com.maxrave.domain.repository.SongRepository
+import com.maxrave.domain.utils.connectArtists
+import com.maxrave.domain.utils.toListName
+import com.maxrave.domain.utils.toSongEntity
 import com.maxrave.logger.Logger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -29,11 +37,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
 import org.simpmusic.simpconnect.AuthRequest
 import org.simpmusic.simpconnect.ConnectionStatus
 import org.simpmusic.simpconnect.DiscoveredDevice
@@ -53,8 +64,12 @@ private const val KEY_APPROVED_DEVICES = "simpconnect_approved_devices"
 class SimpConnectRepositoryImpl(
     private val mediaPlayerHandler: MediaPlayerHandler,
     private val dataStoreManager: DataStoreManager,
+    private val songRepository: SongRepository,
     private val scope: CoroutineScope,
-) : SimpConnectRepository, SimpConnectServerListener {
+) : SimpConnectRepository, SimpConnectServerListener, KoinComponent {
+
+    private val context: Context by inject()
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     private val localDeviceId: String = runBlocking {
         val existing = dataStoreManager.getString(KEY_DEVICE_ID).first()
@@ -156,6 +171,14 @@ class SimpConnectRepositoryImpl(
         started = true
         Logger.d(TAG, "Starting SimpConnectRepository for $localDeviceNameString")
 
+        runCatching {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            multicastLock = wifiManager?.createMulticastLock("SimpConnectMulticast")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }
+
         scope.launch(Dispatchers.IO) {
             val port =
                 runCatching { server.start() }
@@ -222,10 +245,20 @@ class SimpConnectRepositoryImpl(
             mediaPlayerHandler.nowPlaying.collect { broadcastCurrentState() }
         }
         scope.launch {
+            mediaPlayerHandler.nowPlayingState.collect { broadcastCurrentState() }
+        }
+        scope.launch {
             mediaPlayerHandler.controlState.collect { broadcastCurrentState() }
         }
         scope.launch {
             mediaPlayerHandler.queueData.collect { broadcastCurrentState() }
+        }
+        scope.launch {
+            mediaPlayerHandler.simpleMediaState.collect { state ->
+                if (state is SimpleMediaState.Ready) {
+                    broadcastCurrentState()
+                }
+            }
         }
 
         // Periodic ticker to sync playback position to connected controllers while playing
@@ -260,7 +293,7 @@ class SimpConnectRepositoryImpl(
             try {
                 val player = mediaPlayerHandler.player
                 player.playWhenReady = false
-                player.stop()
+                player.pause()
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -292,6 +325,12 @@ class SimpConnectRepositoryImpl(
 
     override fun stopDiscovery() {
         discovery.stop()
+        runCatching {
+            if (multicastLock?.isHeld == true) {
+                multicastLock?.release()
+            }
+        }
+        multicastLock = null
     }
 
     override fun connectToDevice(device: DiscoveredDeviceDomain) {
@@ -307,6 +346,7 @@ class SimpConnectRepositoryImpl(
         // device in the picker and taps it.
         _pendingDevice.value = device
         _activeRemoteDevice.value = null
+        _connectionStatus.value = SimpConnectStatusDomain.CONNECTING
         client.connect(wireDevice)
     }
 
@@ -314,6 +354,9 @@ class SimpConnectRepositoryImpl(
         _pendingDevice.value = null
         client.disconnect()
         _activeRemoteDevice.value = null
+        _remotePlaybackState.value = null
+        _connectionStatus.value = SimpConnectStatusDomain.DISCONNECTED
+        resumeLocalPlayer()
     }
 
     override fun sendPlayPause() {
@@ -378,16 +421,23 @@ class SimpConnectRepositoryImpl(
     }
 
     override fun handoffToRemote(device: DiscoveredDeviceDomain) {
-        val nowPlaying = mediaPlayerHandler.nowPlaying.value ?: return
+        val nowPlaying = mediaPlayerHandler.nowPlaying.value
+        val songEntity = mediaPlayerHandler.nowPlayingState.value.songEntity
+        val currentTrackSummary = songEntity?.toTrackSummary() ?: nowPlaying?.toTrackSummary()
+
+        if (currentTrackSummary == null) {
+            connectToDevice(device)
+            return
+        }
+
         val queue = mediaPlayerHandler.queueData.value?.data?.listTracks.orEmpty()
         // Capture the local session BEFORE connecting: once the handshake completes the local
         // player is paused and may already be showing the target's state.
-        val trackSummary = nowPlaying.toTrackSummary()
         val rawQueue = queue.map { it.toTrackSummary() }
         // queueData can lag behind the player (radio/restored queue). If it does not contain what is
         // actually playing, send only that track instead of starting the wrong song on the target.
-        val foundIndex = rawQueue.indexOfFirst { it.videoId == trackSummary.videoId }
-        val wireQueue = if (foundIndex >= 0 || rawQueue.isEmpty()) rawQueue else listOf(trackSummary)
+        val foundIndex = rawQueue.indexOfFirst { it.videoId == currentTrackSummary.videoId }
+        val wireQueue = if (foundIndex >= 0 || rawQueue.isEmpty()) rawQueue else listOf(currentTrackSummary)
         val startIndex = if (foundIndex >= 0) foundIndex else 0
         val wasPlaying = mediaPlayerHandler.controlState.value.isPlaying
         // Captured before connecting: the connection callback pauses the local player, which would
@@ -396,31 +446,35 @@ class SimpConnectRepositoryImpl(
 
         connectToDevice(device)
         scope.launch {
-            val result =
-                kotlinx.coroutines.withTimeoutOrNull(20_000L) {
-                    connectionStatus.first {
-                        it == SimpConnectStatusDomain.CONNECTED ||
-                            it == SimpConnectStatusDomain.FAILED ||
-                            it == SimpConnectStatusDomain.REJECTED ||
-                            it == SimpConnectStatusDomain.DISCONNECTED
+            val finalStatus =
+                kotlinx.coroutines.withTimeoutOrNull(30_000L) {
+                    client.connectionStatus.first {
+                        it == ConnectionStatus.CONNECTED ||
+                            it == ConnectionStatus.FAILED ||
+                            it == ConnectionStatus.REJECTED ||
+                            it == ConnectionStatus.DISCONNECTED
                     }
                 }
-            if (result != SimpConnectStatusDomain.CONNECTED) {
-                Logger.w(TAG, "Handoff cancelled: could not connect to ${device.deviceName}")
+            if (finalStatus != ConnectionStatus.CONNECTED) {
+                Logger.w(TAG, "Handoff cancelled: could not connect to ${device.deviceName} (status=$finalStatus)")
                 return@launch
             }
             if (mediaPlayerHandler.controlState.value.isPlaying) {
                 mediaPlayerHandler.onPlayerEvent(PlayerEvent.PlayPause)
             }
-            client.sendPlayTrack(
-                videoId = trackSummary.videoId,
-                playlistId = null,
-                playlistName = null,
-                queue = wireQueue,
-                startIndex = startIndex,
-                playWhenReady = wasPlaying,
-                positionMs = startPosition,
-            )
+            val remoteState = _remotePlaybackState.value
+            val remoteHasTrack = remoteState?.track != null
+            if (wasPlaying || !remoteHasTrack) {
+                client.sendPlayTrack(
+                    videoId = currentTrackSummary.videoId,
+                    playlistId = null,
+                    playlistName = null,
+                    queue = wireQueue,
+                    startIndex = startIndex,
+                    playWhenReady = wasPlaying,
+                    positionMs = startPosition,
+                )
+            }
         }
     }
 
@@ -472,17 +526,17 @@ class SimpConnectRepositoryImpl(
             _remotePlaybackState.value = null
 
             connectToDevice(device)
-            val result =
-                kotlinx.coroutines.withTimeoutOrNull(20_000L) {
-                    connectionStatus.first {
-                        it == SimpConnectStatusDomain.CONNECTED ||
-                            it == SimpConnectStatusDomain.FAILED ||
-                            it == SimpConnectStatusDomain.REJECTED ||
-                            it == SimpConnectStatusDomain.DISCONNECTED
+            val finalStatus =
+                kotlinx.coroutines.withTimeoutOrNull(30_000L) {
+                    client.connectionStatus.first {
+                        it == ConnectionStatus.CONNECTED ||
+                            it == ConnectionStatus.FAILED ||
+                            it == ConnectionStatus.REJECTED ||
+                            it == ConnectionStatus.DISCONNECTED
                     }
                 }
-            if (result != SimpConnectStatusDomain.CONNECTED) {
-                Logger.w(TAG, "Transfer cancelled: could not connect to ${device.deviceName}")
+            if (finalStatus != ConnectionStatus.CONNECTED) {
+                Logger.w(TAG, "Transfer cancelled: could not connect to ${device.deviceName} (status=$finalStatus)")
                 return@launch
             }
             val videoId = track?.videoId ?: sendQueue.getOrNull(sendIndex)?.videoId ?: return@launch
@@ -613,6 +667,7 @@ class SimpConnectRepositoryImpl(
 
     override fun getCurrentState(): SimpConnectMessage.StateSync {
         val nowPlaying = mediaPlayerHandler.nowPlaying.value
+        val songEntity = mediaPlayerHandler.nowPlayingState.value.songEntity
         val controlState = mediaPlayerHandler.controlState.value
         val duration = mediaPlayerHandler.getPlayerDuration()
         val progress = mediaPlayerHandler.getProgress()
@@ -625,11 +680,17 @@ class SimpConnectRepositoryImpl(
             RepeatState.One -> 2
         }
 
+        val currentSummary = songEntity?.toTrackSummary() ?: nowPlaying?.toTrackSummary()
+        val effectiveDuration = duration.takeIf { it > 0L }
+            ?: (songEntity?.durationSeconds?.toLong()?.times(1000L))
+            ?: currentSummary?.durationMs
+            ?: 0L
+
         return SimpConnectMessage.StateSync(
-            track = nowPlaying?.toTrackSummary(),
+            track = currentSummary,
             isPlaying = controlState.isPlaying,
             positionMs = progress.coerceAtLeast(0L),
-            durationMs = duration.coerceAtLeast(0L),
+            durationMs = effectiveDuration.coerceAtLeast(0L),
             volume = controlState.volume,
             isShuffle = controlState.isShuffle,
             repeatMode = repeatModeInt,
@@ -674,6 +735,9 @@ class SimpConnectRepositoryImpl(
                 )
             } else {
                 val track = trackSummary.toTrack()
+                runCatching {
+                    songRepository.insertSong(track.toSongEntity()).firstOrNull()
+                }
                 mediaPlayerHandler.loadMediaItem(track, type = MERGING_DATA_TYPE.SONG, index = null)
                 if (payload.positionMs > 0) {
                     // Wait for the player to know the duration before translating the position.
@@ -702,17 +766,24 @@ class SimpConnectRepositoryImpl(
         if (tracks.isEmpty()) return
         val domainTracks = tracks.map { it.toTrack() }
         val index = startIndex.coerceIn(0, domainTracks.lastIndex)
+        val currentTrack = domainTracks[index]
+        val startPos = positionMs.coerceAtLeast(0L)
 
-        val player = mediaPlayerHandler.player
-        player.shuffleModeEnabled = false
-        player.clearMediaItems()
-        for (track in domainTracks) {
-            player.addMediaItem(track.toGenericMediaItem())
+        // 1. Persist current track into songRepository so nowPlayingState.songEntity can load
+        runCatching {
+            songRepository.insertSong(currentTrack.toSongEntity()).firstOrNull()
         }
+        if (domainTracks.size > 1) {
+            runCatching {
+                songRepository.insertSongs(domainTracks.map { it.toSongEntity() })
+            }
+        }
+
+        // 2. Set queue data
         mediaPlayerHandler.setQueueData(
             QueueData.Data(
                 listTracks = domainTracks,
-                firstPlayedTrack = domainTracks[index],
+                firstPlayedTrack = currentTrack,
                 playlistId = null,
                 playlistName = null,
                 playlistType = null,
@@ -720,17 +791,29 @@ class SimpConnectRepositoryImpl(
             ),
         )
         mediaPlayerHandler.setCurrentSongIndex(index)
-        // Not playMediaItemInMediaSource(): it forces playWhenReady = true, so a paused handoff
-        // started playing for a moment before being paused again.
-        player.seekTo(index, 0L)
-        player.prepare()
-        player.playWhenReady = playWhenReady
 
-        if (positionMs > 0L) {
-            // Let the selected item load so the seek lands on the right stream.
-            kotlinx.coroutines.delay(400)
-            player.seekTo(positionMs)
+        // 3. Clear and set current track
+        mediaPlayerHandler.clearMediaItems()
+        currentTrack.durationSeconds?.let {
+            songRepository.updateDurationSeconds(it, currentTrack.videoId)
         }
+
+        val genericItem = currentTrack.toSimpConnectMediaItem()
+        mediaPlayerHandler.addMediaItem(genericItem, playWhenReady = playWhenReady)
+
+        // 4. Load full queue or fetch related endless radio
+        if (domainTracks.size > 1) {
+            mediaPlayerHandler.loadPlaylistOrAlbum(index)
+        } else {
+            mediaPlayerHandler.getRelated(currentTrack.videoId)
+        }
+
+        if (startPos > 0L) {
+            kotlinx.coroutines.delay(400)
+            mediaPlayerHandler.player.seekTo(startPos)
+        }
+
+        broadcastCurrentState()
     }
 
     // ==========================================
@@ -824,6 +907,34 @@ class SimpConnectRepositoryImpl(
             category = null,
             feedbackTokens = null,
             resultType = null,
+        )
+    }
+
+    private fun SongEntity.toTrackSummary(): TrackSummary =
+        TrackSummary(
+            videoId = videoId,
+            title = title,
+            artist = artistName?.connectArtists().orEmpty(),
+            album = albumName,
+            artworkUri = thumbnails,
+            durationMs = durationSeconds.toLong() * 1000L,
+        )
+
+    private fun Track.toSimpConnectMediaItem(): GenericMediaItem {
+        val thumb = thumbnails?.lastOrNull()?.url?.ifBlank { null }
+            ?: "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+        return GenericMediaItem(
+            mediaId = videoId,
+            uri = videoId,
+            metadata = GenericMediaMetadata(
+                title = title,
+                artist = artists.toListName().connectArtists(),
+                albumTitle = album?.name,
+                artworkUri = thumb,
+                description = MERGING_DATA_TYPE.SONG,
+                durationMs = durationSeconds?.takeIf { it > 0 }?.toLong()?.times(1000L),
+            ),
+            customCacheKey = videoId,
         )
     }
 }

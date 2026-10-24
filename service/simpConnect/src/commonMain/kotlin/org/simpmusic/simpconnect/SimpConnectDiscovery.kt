@@ -56,6 +56,13 @@ class SimpConnectDiscovery(
         }
 
         periodicPingJob = scope.launch(Dispatchers.IO) {
+            // Wait briefly for the listener socket to bind so the initial ping originates
+            // from the listening socket instead of an ephemeral one.
+            var waited = 0
+            while (socket == null && waited < 600) {
+                delay(50)
+                waited += 50
+            }
             // Initial burst
             broadcastPingInternal()
             delay(1500)
@@ -146,6 +153,23 @@ class SimpConnectDiscovery(
         when (msg) {
             is DiscoveryMessage.Ping -> {
                 if (msg.deviceId == localDeviceId) return // Ignore own ping
+
+                // Register ping sender immediately if valid TCP port is carried
+                val hostIp = packet.address?.hostAddress
+                if (hostIp != null && msg.tcpPort > 0) {
+                    val now = System.currentTimeMillis()
+                    val device = DiscoveredDevice(
+                        deviceId = msg.deviceId,
+                        deviceName = msg.deviceName,
+                        platform = msg.platform,
+                        hostAddress = hostIp,
+                        tcpPort = msg.tcpPort,
+                        lastSeenMs = now,
+                    )
+                    deviceMap[msg.deviceId] = device
+                    publishDevices()
+                }
+
                 val tcpPort = getTcpPort()
                 if (tcpPort <= 0) return // Server not ready yet
 
@@ -162,6 +186,14 @@ class SimpConnectDiscovery(
                     listeningSocket.send(replyPacket)
                 } catch (e: Exception) {
                     Logger.w(TAG, "Failed to send pong to ${packet.socketAddress}: ${e.message}")
+                }
+                // If ping arrived from an ephemeral port, also unicast to standard discovery port
+                if (packet.port != SIMP_CONNECT_DISCOVERY_PORT && packet.address != null) {
+                    try {
+                        listeningSocket.send(
+                            DatagramPacket(replyBytes, replyBytes.size, packet.address, SIMP_CONNECT_DISCOVERY_PORT)
+                        )
+                    } catch (_: Exception) {}
                 }
             }
 
@@ -185,11 +217,13 @@ class SimpConnectDiscovery(
     }
 
     private fun broadcastPingInternal() {
+        val port = getTcpPort().takeIf { it > 0 } ?: SIMP_CONNECT_DEFAULT_SERVER_PORT
         val ping = DiscoveryMessage.Ping(
             magic = SIMP_CONNECT_MAGIC,
             deviceId = localDeviceId,
             deviceName = localDeviceName(),
             platform = localPlatform,
+            tcpPort = port,
         )
         val data = simpConnectJson.encodeToString(DiscoveryMessage.serializer(), ping).encodeToByteArray()
 

@@ -23,6 +23,7 @@ sealed class DiscoveryMessage {
         val deviceId: String,
         val deviceName: String,
         val platform: String,
+        val tcpPort: Int = SIMP_CONNECT_DEFAULT_SERVER_PORT,
     ) : DiscoveryMessage()
 
     @Serializable
