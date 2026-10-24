@@ -48,7 +48,9 @@ internal class DataStoreManagerImpl(
     }
 
     override val syncServerUrl: Flow<String> =
-        settingsDataStore.data.map { preferences -> preferences[SYNC_SERVER_URL] ?: "" }
+        settingsDataStore.data.map { preferences ->
+            preferences[SYNC_SERVER_URL]?.takeIf { it.isNotBlank() } ?: DEFAULT_SYNC_SERVER_URL
+        }
 
     override suspend fun setSyncServerUrl(url: String) {
         withContext(Dispatchers.IO) {
@@ -64,6 +66,68 @@ internal class DataStoreManagerImpl(
             settingsDataStore.edit { settings ->
                 if (session == null) settings.remove(SYNC_SESSION) else settings[SYNC_SESSION] = session
             }
+        }
+    }
+
+    override val syncCursor: Flow<Long> =
+        settingsDataStore.data.map { preferences -> preferences[SYNC_CURSOR] ?: 0L }
+
+    override suspend fun setSyncCursor(cursor: Long) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings -> settings[SYNC_CURSOR] = cursor }
+        }
+    }
+
+    override val syncDataKey: Flow<String?> =
+        settingsDataStore.data.map { preferences -> preferences[SYNC_DATA_KEY] }
+
+    override suspend fun setSyncDataKey(key: String?) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                if (key == null) settings.remove(SYNC_DATA_KEY) else settings[SYNC_DATA_KEY] = key
+            }
+        }
+    }
+
+    override val syncEmail: Flow<String?> =
+        settingsDataStore.data.map { preferences -> preferences[SYNC_EMAIL] }
+
+    override suspend fun setSyncEmail(email: String?) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                if (email == null) settings.remove(SYNC_EMAIL) else settings[SYNC_EMAIL] = email
+            }
+        }
+    }
+
+    override val syncDeviceName: Flow<String?> =
+        settingsDataStore.data.map { preferences -> preferences[SYNC_DEVICE_NAME] }
+
+    override suspend fun setSyncDeviceName(deviceName: String?) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                if (deviceName == null) settings.remove(SYNC_DEVICE_NAME) else settings[SYNC_DEVICE_NAME] = deviceName
+            }
+        }
+    }
+
+    override val syncRecoveryKey: Flow<String?> =
+        settingsDataStore.data.map { preferences -> preferences[SYNC_RECOVERY_KEY] }
+
+    override suspend fun setSyncRecoveryKey(recoveryKey: String?) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                if (recoveryKey == null) settings.remove(SYNC_RECOVERY_KEY) else settings[SYNC_RECOVERY_KEY] = recoveryKey
+            }
+        }
+    }
+
+    override val syncLastSyncedAt: Flow<Long> =
+        settingsDataStore.data.map { preferences -> preferences[SYNC_LAST_SYNCED_AT] ?: 0L }
+
+    override suspend fun setSyncLastSyncedAt(epochMillis: Long) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings -> settings[SYNC_LAST_SYNCED_AT] = epochMillis }
         }
     }
 
@@ -1928,9 +1992,16 @@ internal class DataStoreManagerImpl(
         val MOOD_AND_GENRES_CACHE = stringPreferencesKey("mood_and_genres_cache")
         val MOOD_ARTWORK_CACHE = stringPreferencesKey("mood_artwork_cache")
         val TASTE_PROFILE = stringPreferencesKey("ai_taste_profile")
+        const val DEFAULT_SYNC_SERVER_URL = "https://sync.muriloscolari.me"
         val SYNC_ENABLED = booleanPreferencesKey("sync_enabled")
         val SYNC_SERVER_URL = stringPreferencesKey("sync_server_url")
         val SYNC_SESSION = stringPreferencesKey("sync_session")
+        val SYNC_CURSOR = longPreferencesKey("sync_cursor")
+        val SYNC_DATA_KEY = stringPreferencesKey("sync_data_key")
+        val SYNC_EMAIL = stringPreferencesKey("sync_email")
+        val SYNC_DEVICE_NAME = stringPreferencesKey("sync_device_name")
+        val SYNC_RECOVERY_KEY = stringPreferencesKey("sync_recovery_key")
+        val SYNC_LAST_SYNCED_AT = longPreferencesKey("sync_last_synced_at")
         val QUALITY = stringPreferencesKey("quality")
         val DOWNLOAD_QUALITY = stringPreferencesKey("download_quality")
         val VIDEO_DOWNLOAD_QUALITY = stringPreferencesKey("video_download_quality")

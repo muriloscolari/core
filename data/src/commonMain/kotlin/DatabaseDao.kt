@@ -256,6 +256,12 @@ interface DatabaseDao {
     @Query("UPDATE song SET totalPlayTime = totalPlayTime + 1 WHERE videoId = :videoId")
     suspend fun updateTotalPlayTime(videoId: String)
 
+    @Query("UPDATE song SET totalPlayTime = :totalPlayTime WHERE videoId = :videoId AND totalPlayTime < :totalPlayTime")
+    suspend fun updateTotalPlayTimeIfGreater(
+        videoId: String,
+        totalPlayTime: Long,
+    )
+
     @Query("UPDATE song SET totalPlayTime = 0 WHERE videoId = :videoId")
     suspend fun resetTotalPlayTime(videoId: String)
 
@@ -1194,6 +1200,49 @@ interface DatabaseDao {
         }
         return eventId
     }
+
+    @Query("SELECT channelId FROM event_artist WHERE eventId = :eventId")
+    suspend fun getEventArtistChannelIds(eventId: Long): List<String>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM playback_event WHERE timestamp = :timestamp AND videoId = :videoId)")
+    suspend fun hasPlaybackEvent(
+        timestamp: LocalDateTime,
+        videoId: String,
+    ): Boolean
+
+    @Transaction
+    suspend fun insertSyncedPlaybackWithArtists(
+        timestamp: LocalDateTime,
+        videoId: String,
+        channelIds: List<String>,
+        albumBrowseId: String?,
+        durationSecond: Long,
+        listenedSecond: Long,
+    ) {
+        if (hasPlaybackEvent(timestamp, videoId)) return
+        val eventId =
+            insertPlaybackEvent(
+                PlaybackEventEntity(
+                    timestamp = timestamp,
+                    videoId = videoId,
+                    albumBrowseId = albumBrowseId,
+                    durationSecond = durationSecond,
+                    listenedSecond = listenedSecond,
+                ),
+            )
+        channelIds.distinct().forEach { channelId ->
+            insertEventArtist(
+                EventArtistEntity(
+                    eventId = eventId,
+                    channelId = channelId,
+                    timestamp = timestamp,
+                ),
+            )
+        }
+    }
+
+    @Query("DELETE FROM search_history WHERE query = :query")
+    suspend fun deleteSearchHistoryItem(query: String)
 
     @Query("SELECT * FROM playback_event ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
     suspend fun getPlaybackEventsByOffset(

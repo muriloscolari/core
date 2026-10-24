@@ -63,6 +63,8 @@ internal class LocalDataSource(
 
     suspend fun deleteSearchHistory() = databaseDao.deleteSearchHistory()
 
+    suspend fun deleteSearchHistoryItem(query: String) = databaseDao.deleteSearchHistoryItem(query)
+
     suspend fun insertSearchHistory(searchHistory: SearchHistory) = databaseDao.insertSearchHistory(searchHistory)
 
     suspend fun getAllSongs(limit: Int) = databaseDao.getAllSongs(limit)
@@ -254,6 +256,11 @@ internal class LocalDataSource(
     ) = databaseDao.updateVideoTypeSongEntity(videoType, videoId)
 
     suspend fun updateListenCount(videoId: String) = databaseDao.updateTotalPlayTime(videoId)
+
+    suspend fun updateTotalPlayTimeIfGreater(
+        videoId: String,
+        totalPlayTime: Long,
+    ) = databaseDao.updateTotalPlayTimeIfGreater(videoId, totalPlayTime)
 
     suspend fun resetTotalPlayTime(videoId: String) = databaseDao.resetTotalPlayTime(videoId)
 

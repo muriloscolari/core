@@ -23,6 +23,24 @@ internal class AnalyticsDatasource(
         listenedSecond = listenedSecond,
     )
 
+    suspend fun insertSyncedPlaybackEvent(
+        timestamp: LocalDateTime,
+        videoId: String,
+        channelIds: List<String>,
+        albumBrowseId: String?,
+        durationSecond: Long,
+        listenedSecond: Long,
+    ) = databaseDao.insertSyncedPlaybackWithArtists(
+        timestamp = timestamp,
+        videoId = videoId,
+        channelIds = channelIds,
+        albumBrowseId = albumBrowseId,
+        durationSecond = durationSecond,
+        listenedSecond = listenedSecond,
+    )
+
+    suspend fun getEventArtistChannelIds(eventId: Long): List<String> = databaseDao.getEventArtistChannelIds(eventId)
+
     suspend fun getPlaybackEventsByOffset(
         offset: Int,
         limit: Int,

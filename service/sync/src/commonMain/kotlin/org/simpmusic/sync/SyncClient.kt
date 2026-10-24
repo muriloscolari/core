@@ -4,27 +4,33 @@ import com.maxrave.ktorext.getEngine
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocketSession
-import io.ktor.client.request.header
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.serialization.kotlinx.json.json
 import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
+import io.ktor.websocket.close
 import io.ktor.websocket.readText
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 
 class SyncClient(
     private val baseUrl: String,
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+        encodeDefaults = true
+    }
     private val http = HttpClient(getEngine()) {
         install(ContentNegotiation) { json(json) }
         install(WebSockets)
@@ -47,7 +53,7 @@ class SyncClient(
         val response = http.post("$baseUrl/v1/auth/logout") {
             header("Authorization", "Bearer $token")
         }
-        if (response.status != HttpStatusCode.NoContent) {
+        if (response.status != HttpStatusCode.NoContent && response.status != HttpStatusCode.Unauthorized) {
             error("logout failed with HTTP ${response.status.value}: ${response.bodyAsText()}")
         }
     }
@@ -60,6 +66,15 @@ class SyncClient(
             error("device listing failed with HTTP ${response.status.value}: ${response.bodyAsText()}")
         }
         return response.body()
+    }
+
+    suspend fun revokeDevice(token: String, deviceId: String) {
+        val response = http.delete("$baseUrl/v1/devices/$deviceId") {
+            header("Authorization", "Bearer $token")
+        }
+        if (response.status != HttpStatusCode.NoContent) {
+            error("device revocation failed with HTTP ${response.status.value}: ${response.bodyAsText()}")
+        }
     }
 
     suspend fun connectNotifications(token: String): WebSocketSession {
@@ -78,7 +93,26 @@ class SyncClient(
             else -> ""
         }
 
-    suspend fun close() {
+    suspend fun observeNotifications(
+        token: String,
+        onConnected: () -> Unit = {},
+        onMessage: suspend (String) -> Unit,
+    ) {
+        val session = connectNotifications(token)
+        onConnected()
+        try {
+            while (true) {
+                val text = nextNotification(session) ?: break
+                if (text.isNotBlank()) {
+                    onMessage(text)
+                }
+            }
+        } finally {
+            runCatching { session.close() }
+        }
+    }
+
+    fun close() {
         http.close()
     }
 

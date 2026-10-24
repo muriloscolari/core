@@ -115,8 +115,8 @@ val repositoryModule =
             StreamRepositoryImpl(get(), get())
         }
 
-        single<SyncRepository> {
-            SyncRepositoryImpl(get())
+        single<SyncRepository>(createdAtStart = true) {
+            SyncRepositoryImpl(get(), get(), get(), get())
         }
 
         single<UpdateRepository>(createdAtStart = true) {

@@ -14,6 +14,24 @@ interface DataStoreManager {
     val syncSession: Flow<String?>
     suspend fun setSyncSession(session: String?)
 
+    val syncCursor: Flow<Long>
+    suspend fun setSyncCursor(cursor: Long)
+
+    val syncDataKey: Flow<String?>
+    suspend fun setSyncDataKey(key: String?)
+
+    val syncEmail: Flow<String?>
+    suspend fun setSyncEmail(email: String?)
+
+    val syncDeviceName: Flow<String?>
+    suspend fun setSyncDeviceName(deviceName: String?)
+
+    val syncRecoveryKey: Flow<String?>
+    suspend fun setSyncRecoveryKey(recoveryKey: String?)
+
+    val syncLastSyncedAt: Flow<Long>
+    suspend fun setSyncLastSyncedAt(epochMillis: Long)
+
     val appVersion: Flow<String>
 
     suspend fun setAppVersion(version: String)

@@ -31,6 +31,7 @@ data class SyncDevice(
     val deviceName: String,
     val createdAt: String,
     val lastSeenAt: String,
+    val current: Boolean = false,
 )
 
 @Serializable
@@ -53,4 +54,29 @@ data class SyncRequest(
 data class SyncResponse(
     val changes: List<SyncBlob> = emptyList(),
     val cursor: Long = 0,
+    val hasMore: Boolean = false,
+)
+
+@Serializable
+data class SyncKeyring(
+    val version: Int = 1,
+    val masterWrappedDek: String,
+    val recoveryWrappedDek: String,
+)
+
+@Serializable
+data class SyncWsNotification(
+    val entityType: String = "",
+    val entityId: String = "",
+    val version: Long = 0,
+)
+
+data class DerivedCredentials(
+    val authProof: String,
+    val wrappingKey: ByteArray,
+)
+
+data class DerivedRecovery(
+    val recoveryKeyHash: String,
+    val wrappingKey: ByteArray,
 )
