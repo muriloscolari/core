@@ -108,13 +108,12 @@ internal class SongRepositoryImpl(
         localDataSource.getDownloadedVideoIdListFromListVideoIdAsFlow(listVideoId)
 
     override fun getLikedSongs(): Flow<List<SongEntity>> =
-        flow {
-            emit(
+        localDataSource.observeLikedSongInvalidation()
+            .map {
                 getFullDataFromDB { limit, offset ->
                     localDataSource.getLikedSongs(limit, offset)
-                },
-            )
-        }.flowOn(Dispatchers.IO)
+                }
+            }.flowOn(Dispatchers.IO)
 
     override suspend fun downloadAllLikedSongs(): Int =
         withContext(Dispatchers.IO) {

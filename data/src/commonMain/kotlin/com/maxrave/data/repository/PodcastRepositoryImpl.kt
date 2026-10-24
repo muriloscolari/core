@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 
 internal class PodcastRepositoryImpl(
     private val localDataSource: LocalDataSource,
@@ -246,13 +247,12 @@ internal class PodcastRepositoryImpl(
         }.flowOn(Dispatchers.IO)
 
     override fun getFavoritePodcasts(): Flow<List<PodcastsEntity>> =
-        flow {
-            emit(
+        localDataSource.observeFavoritePodcastInvalidation()
+            .map {
                 getFullDataFromDB { limit, offset ->
                     localDataSource.getFavoritePodcasts(limit, offset)
                 }
-            )
-        }.flowOn(Dispatchers.IO)
+            }.flowOn(Dispatchers.IO)
 
     override fun updatePodcastInLibraryNow(id: String) =
         flow {

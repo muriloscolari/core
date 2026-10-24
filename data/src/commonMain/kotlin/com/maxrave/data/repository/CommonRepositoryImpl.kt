@@ -310,9 +310,10 @@ internal class CommonRepositoryImpl(
 
     // Recently data
     override fun getAllRecentData(): Flow<List<RecentlyType>> =
-        flow {
-            emit(localDataSource.getAllRecentData())
-        }.flowOn(Dispatchers.IO)
+        localDataSource.observeRecentDataInvalidation()
+            .map { localDataSource.getAllRecentData() }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.IO)
 
     override fun getLibraryOverview(): Flow<LibraryOverview> =
         combine(

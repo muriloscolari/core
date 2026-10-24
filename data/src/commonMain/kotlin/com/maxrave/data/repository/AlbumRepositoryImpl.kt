@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDateTime
 
@@ -39,16 +40,15 @@ internal class AlbumRepositoryImpl(
     override fun getAlbumAsFlow(id: String) = localDataSource.getAlbumAsFlow(id)
 
     override fun getLikedAlbums(): Flow<List<AlbumEntity>> =
-        flow {
-            emit(
+        localDataSource.observeLikedAlbumInvalidation()
+            .map {
                 getFullDataFromDB { limit, offset ->
                     localDataSource.getLikedAlbums(
                         limit,
                         offset,
                     )
-                },
-            )
-        }.flowOn(Dispatchers.IO)
+                }
+            }.flowOn(Dispatchers.IO)
 
     override fun insertAlbum(albumEntity: AlbumEntity) =
         flow {

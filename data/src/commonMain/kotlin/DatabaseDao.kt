@@ -1734,4 +1734,42 @@ interface DatabaseDao {
         insertAutoEqEntries(entries)
         upsertAutoEqIndexMeta(meta)
     }
+
+    // ========== SimpSync Real-Time Change Signatures ==========
+
+    @Query("SELECT videoId || ':' || COALESCE(favoriteAt, '') FROM song WHERE liked = 1 ORDER BY videoId")
+    fun observeLikedSongSignatures(): Flow<List<String>>
+
+    @Query("SELECT id || ':' || title || ':' || COALESCE(thumbnail, '') || ':' || COALESCE(youtubePlaylistId, '') || ':' || youtube_sync_state || ':' || COALESCE(tracks, '') FROM local_playlist ORDER BY id")
+    fun observeLocalPlaylistSignatures(): Flow<List<String>>
+
+    @Query("SELECT playlistId || ':' || songId || ':' || position FROM pair_song_local_playlist ORDER BY playlistId, position")
+    fun observeLocalPlaylistPairSignatures(): Flow<List<String>>
+
+    @Query("SELECT channelId || ':' || COALESCE(followedAt, '') FROM artist WHERE followed = 1 ORDER BY channelId")
+    fun observeFollowedArtistSignatures(): Flow<List<String>>
+
+    @Query("SELECT browseId || ':' || COALESCE(favoriteAt, '') FROM album WHERE liked = 1 ORDER BY browseId")
+    fun observeLikedAlbumSignatures(): Flow<List<String>>
+
+    @Query("SELECT id || ':' || COALESCE(favoriteAt, '') FROM playlist WHERE liked = 1 ORDER BY id")
+    fun observeLikedPlaylistSignatures(): Flow<List<String>>
+
+    @Query("SELECT podcastId || ':' || COALESCE(favoriteTime, '') FROM podcast_table WHERE isFavorite = 1 ORDER BY podcastId")
+    fun observeFavoritePodcastSignatures(): Flow<List<String>>
+
+    @Query("SELECT COUNT(*) FROM song")
+    fun observeSongTablePulse(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM artist")
+    fun observeArtistTablePulse(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM album")
+    fun observeAlbumTablePulse(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM playlist")
+    fun observePlaylistTablePulse(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM podcast_table")
+    fun observePodcastTablePulse(): Flow<Int>
 }

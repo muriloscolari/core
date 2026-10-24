@@ -18,6 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -35,11 +36,12 @@ import org.simpmusic.sync.SyncRecoveryRequest
 import org.simpmusic.sync.SyncRequest
 import org.simpmusic.sync.SyncSession
 import org.simpmusic.sync.SyncWsNotification
+import kotlin.concurrent.Volatile
 import kotlin.time.Clock
 
 internal class SyncRepositoryImpl(
     private val dataStore: DataStoreManager,
-    localDataSource: LocalDataSource,
+    private val localDataSource: LocalDataSource,
     analyticsDatasource: AnalyticsDatasource,
     commonRepository: CommonRepository,
 ) : SyncRepository {
@@ -58,7 +60,11 @@ internal class SyncRepositoryImpl(
 
     private var realtimeJob: Job? = null
     private var periodicJob: Job? = null
+    private var localObserverJob: Job? = null
     private var debounceSyncJob: Job? = null
+
+    @Volatile
+    private var suppressLocalObserverUntilMs: Long = 0L
 
     private val _status = MutableStateFlow(SyncStatus())
     override val status: StateFlow<SyncStatus> = _status
@@ -67,6 +73,8 @@ internal class SyncRepositoryImpl(
         private const val TAG = "SimpSyncRepo"
         private const val PUSH_BATCH_SIZE = 150
         private const val PERIODIC_SYNC_MS = 5 * 60 * 1000L // 5 minutes
+        private const val LOCAL_CHANGE_DEBOUNCE_MS = 1_500L
+        private const val WS_PULL_DEBOUNCE_MS = 300L
     }
 
     init {
@@ -453,11 +461,13 @@ internal class SyncRepositoryImpl(
                         request = SyncRequest(changes = emptyList(), cursor = cursor),
                     )
                     if (pullResponse.changes.isNotEmpty()) {
+                        suppressLocalObserverUntilMs = Clock.System.now().toEpochMilliseconds() + 3_000L
                         val remoteAnalyticsIso = payloadStore.applyRemoteChanges(
                             dek = dek,
                             changes = pullResponse.changes,
                             currentHashes = mutableHashes,
                         )
+                        suppressLocalObserverUntilMs = Clock.System.now().toEpochMilliseconds() + 1_000L
                         if (remoteAnalyticsIso != null &&
                             (newestAnalyticsIso == null || remoteAnalyticsIso > newestAnalyticsIso)
                         ) {
@@ -482,11 +492,13 @@ internal class SyncRepositoryImpl(
                             request = SyncRequest(changes = batch, cursor = cursor),
                         )
                         if (pushResponse.changes.isNotEmpty()) {
+                            suppressLocalObserverUntilMs = Clock.System.now().toEpochMilliseconds() + 3_000L
                             payloadStore.applyRemoteChanges(
                                 dek = dek,
                                 changes = pushResponse.changes,
                                 currentHashes = mutableHashes,
                             )
+                            suppressLocalObserverUntilMs = Clock.System.now().toEpochMilliseconds() + 1_000L
                         }
                         cursor = pushResponse.cursor
                         dataStore.setSyncCursor(cursor)
@@ -586,7 +598,7 @@ internal class SyncRepositoryImpl(
                             }.getOrNull()
                             val currentCursor = dataStore.syncCursor.first()
                             if (notif == null || notif.version > currentCursor) {
-                                scheduleDebouncedSync()
+                                scheduleDebouncedSync(WS_PULL_DEBOUNCE_MS)
                             }
                         },
                     )
@@ -599,6 +611,20 @@ internal class SyncRepositoryImpl(
                 delay(backoffMs)
                 backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
             }
+        }
+
+        localObserverJob = scope.launch {
+            localDataSource.observePrimaryLibrarySignature()
+                .drop(1)
+                .collect {
+                    val now = Clock.System.now().toEpochMilliseconds()
+                    if (now >= suppressLocalObserverUntilMs &&
+                        dataStore.syncEnabled.first() &&
+                        readSession() != null
+                    ) {
+                        scheduleDebouncedSync(LOCAL_CHANGE_DEBOUNCE_MS)
+                    }
+                }
         }
 
         periodicJob = scope.launch {
@@ -614,6 +640,8 @@ internal class SyncRepositoryImpl(
     private fun stopBackgroundWorkers() {
         realtimeJob?.cancel()
         realtimeJob = null
+        localObserverJob?.cancel()
+        localObserverJob = null
         periodicJob?.cancel()
         periodicJob = null
         debounceSyncJob?.cancel()
@@ -621,10 +649,10 @@ internal class SyncRepositoryImpl(
         _status.value = _status.value.copy(realtimeConnected = false)
     }
 
-    private fun scheduleDebouncedSync() {
+    private fun scheduleDebouncedSync(delayMs: Long = LOCAL_CHANGE_DEBOUNCE_MS) {
         debounceSyncJob?.cancel()
         debounceSyncJob = scope.launch {
-            delay(1_200L)
+            delay(delayMs)
             synchronize()
         }
     }

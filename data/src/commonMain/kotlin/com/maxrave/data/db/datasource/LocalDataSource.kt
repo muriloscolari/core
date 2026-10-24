@@ -29,6 +29,9 @@ import com.maxrave.domain.data.player.LiveStreamRegistry
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.utils.FilterState
 import com.maxrave.domain.utils.isLive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.datetime.LocalDateTime
 
 /** SQLite caps bind parameters per statement; stay well under it when deleting in bulk. */
@@ -812,6 +815,69 @@ internal class LocalDataSource(
         entries: List<AutoEqEntryEntity>,
         meta: AutoEqIndexMetaEntity,
     ) = databaseDao.replaceAutoEqIndex(entries, meta)
+
+    /**
+     * Emits a composite signature whenever a primary library entity changes (liked songs,
+     * local playlists & their tracks, followed artists, liked albums/playlists, favorite podcasts).
+     * Continuous playback time updates (`totalPlayTime`) and `playback_event` rows are ignored here.
+     */
+    fun observePrimaryLibrarySignature(): Flow<String> {
+        val groupA = combine(
+            databaseDao.observeLikedSongSignatures().distinctUntilChanged(),
+            databaseDao.observeLocalPlaylistSignatures().distinctUntilChanged(),
+            databaseDao.observeLocalPlaylistPairSignatures().distinctUntilChanged(),
+            databaseDao.observeFollowedArtistSignatures().distinctUntilChanged(),
+        ) { songs, playlists, pairs, artists ->
+            buildString {
+                append("S:"); append(songs.joinToString(","))
+                append("|LP:"); append(playlists.joinToString(","))
+                append("|P:"); append(pairs.joinToString(","))
+                append("|A:"); append(artists.joinToString(","))
+            }
+        }
+        val groupB = combine(
+            databaseDao.observeLikedAlbumSignatures().distinctUntilChanged(),
+            databaseDao.observeLikedPlaylistSignatures().distinctUntilChanged(),
+            databaseDao.observeFavoritePodcastSignatures().distinctUntilChanged(),
+        ) { albums, remotePlaylists, podcasts ->
+            buildString {
+                append("AL:"); append(albums.joinToString(","))
+                append("|RP:"); append(remotePlaylists.joinToString(","))
+                append("|PO:"); append(podcasts.joinToString(","))
+            }
+        }
+        return combine(groupA, groupB) { a, b -> "$a|$b" }.distinctUntilChanged()
+    }
+
+    fun observeRecentDataInvalidation(): Flow<Unit> =
+        combine(
+            databaseDao.observeSongTablePulse(),
+            databaseDao.observeArtistTablePulse(),
+            databaseDao.observeAlbumTablePulse(),
+            databaseDao.observePlaylistTablePulse(),
+            databaseDao.observePodcastTablePulse(),
+        ) { _, _, _, _, _ -> Unit }
+
+    fun observeLikedSongInvalidation(): Flow<List<String>> =
+        databaseDao.observeLikedSongSignatures().distinctUntilChanged()
+
+    fun observeFollowedArtistInvalidation(): Flow<List<String>> =
+        databaseDao.observeFollowedArtistSignatures().distinctUntilChanged()
+
+    fun observeLocalPlaylistInvalidation(): Flow<List<String>> =
+        combine(
+            databaseDao.observeLocalPlaylistSignatures(),
+            databaseDao.observeLocalPlaylistPairSignatures(),
+        ) { a, b -> a + b }.distinctUntilChanged()
+
+    fun observeLikedAlbumInvalidation(): Flow<List<String>> =
+        databaseDao.observeLikedAlbumSignatures().distinctUntilChanged()
+
+    fun observeLikedPlaylistInvalidation(): Flow<List<String>> =
+        databaseDao.observeLikedPlaylistSignatures().distinctUntilChanged()
+
+    fun observeFavoritePodcastInvalidation(): Flow<List<String>> =
+        databaseDao.observeFavoritePodcastSignatures().distinctUntilChanged()
 }
 
 /**

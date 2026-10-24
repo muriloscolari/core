@@ -43,6 +43,7 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.lastOrNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDateTime
 
@@ -62,13 +63,12 @@ internal class PlaylistRepositoryImpl(
         }.flowOn(Dispatchers.IO)
 
     override fun getLikedPlaylists(): Flow<List<PlaylistEntity>> =
-        flow {
-            emit(
+        localDataSource.observeLikedPlaylistInvalidation()
+            .map {
                 getFullDataFromDB { limit, offset ->
                     localDataSource.getLikedPlaylists(limit, offset)
-                },
-            )
-        }.flowOn(Dispatchers.IO)
+                }
+            }.flowOn(Dispatchers.IO)
 
     override suspend fun insertPlaylist(playlistEntity: PlaylistEntity) =
         withContext(Dispatchers.IO) { localDataSource.insertPlaylist(playlistEntity) }

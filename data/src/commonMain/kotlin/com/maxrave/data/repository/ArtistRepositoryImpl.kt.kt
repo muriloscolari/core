@@ -17,6 +17,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDateTime
 
@@ -131,13 +132,12 @@ internal class ArtistRepositoryImpl(
     }
 
     override fun getFollowedArtists(): Flow<List<ArtistEntity>> =
-        flow {
-            emit(
+        localDataSource.observeFollowedArtistInvalidation()
+            .map {
                 getFullDataFromDB { limit, offset ->
                     localDataSource.getFollowedArtists(limit, offset)
-                },
-            )
-        }.flowOn(Dispatchers.IO)
+                }
+            }.flowOn(Dispatchers.IO)
 
     override suspend fun updateArtistInLibrary(
         inLibrary: LocalDateTime,
