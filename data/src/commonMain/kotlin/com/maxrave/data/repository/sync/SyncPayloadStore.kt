@@ -381,8 +381,8 @@ internal class SyncPayloadStore(
     private suspend fun collectCurrentSnapshot(): Map<String, String> {
         val snapshot = linkedMapOf<String, String>()
 
-        // Settings
-        val settingsBundle = loginSyncStore.bundleSettings(SettingsCategory.entries.toSet())
+        // Settings (excluding device-specific UI preferences: nowPlayingStyle, lyricsStyle, liquidGlassEnabled)
+        val settingsBundle = loginSyncStore.bundleSettings(SettingsCategory.entries.toSet()).stripDeviceLocalAppearance()
         snapshot["$TYPE_SETTINGS:$ID_SETTINGS"] = loginSyncJson.encodeToString(settingsBundle)
 
         // Accounts
@@ -536,9 +536,9 @@ internal class SyncPayloadStore(
     ): String? {
         return when (entityType) {
             TYPE_SETTINGS -> {
-                val bundle = loginSyncJson.decodeFromString<SettingsBundle>(payloadText)
+                val bundle = loginSyncJson.decodeFromString<SettingsBundle>(payloadText).stripDeviceLocalAppearance()
                 loginSyncStore.restoreSettings(bundle)
-                val current = loginSyncStore.bundleSettings(SettingsCategory.entries.toSet())
+                val current = loginSyncStore.bundleSettings(SettingsCategory.entries.toSet()).stripDeviceLocalAppearance()
                 loginSyncJson.encodeToString(current)
             }
             TYPE_ACCOUNTS -> {
@@ -827,4 +827,17 @@ private fun SyncSongWire.toEntity(existing: SongEntity?, mergedPlayTime: Long) =
         inLibrary = inLibraryIso?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() } ?: existing?.inLibrary ?: now(),
         canvasUrl = canvasUrl ?: existing?.canvasUrl,
         canvasThumbUrl = canvasThumbUrl ?: existing?.canvasThumbUrl,
+    )
+
+/**
+ * Strips device-local UI preferences (`nowPlayingStyle`, `lyricsStyle`, `liquidGlassEnabled`)
+ * so each device keeps its own player layout and visual effects.
+ */
+private fun SettingsBundle.stripDeviceLocalAppearance(): SettingsBundle =
+    copy(
+        appearance = appearance?.copy(
+            nowPlayingStyle = null,
+            lyricsStyle = null,
+            liquidGlassEnabled = null,
+        ),
     )
